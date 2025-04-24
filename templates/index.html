@@ -18,7 +18,43 @@
         #latex-editor { border: 1px solid #ccc; margin-top: 20px; }
         .CodeMirror { height: 500px; } /* Set height for CodeMirror */
         #status { margin-top: 15px; font-style: italic; color: #555; }
-        .error { color: red; font-weight: bold;}
+        .error { color: red; font-weight: bold; }
+        
+        /* Tab styles */
+        .tabs { margin-top: 20px; }
+        .tab-buttons { display: flex; gap: 10px; margin-bottom: 10px; }
+        .tab-button {
+            padding: 10px 20px;
+            background: #f0f0f0;
+            border: none;
+            cursor: pointer;
+            border-radius: 4px 4px 0 0;
+        }
+        .tab-button.active {
+            background: #007bff;
+            color: white;
+        }
+        .tab-content {
+            display: none;
+            border: 1px solid #ccc;
+            padding: 20px;
+            border-radius: 0 4px 4px 4px;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        #preview-frame {
+            width: 100%;
+            height: 500px;
+            border: none;
+        }
+        .download-btn {
+            margin-top: 10px;
+            background-color: #28a745;
+        }
+        .download-btn:hover {
+            background-color: #218838;
+        }
     </style>
 </head>
 <body>
@@ -38,11 +74,27 @@
 
         <div id="status"></div>
 
-        <h2>Editable Tailored LaTeX:</h2>
-        <div id="latex-editor">
-            <textarea id="latex-code"></textarea>
+        <div class="tabs">
+            <div class="tab-buttons">
+                <button class="tab-button active" data-tab="edit">Edit LaTeX</button>
+                <button class="tab-button" data-tab="preview">Preview</button>
+            </div>
+            
+            <div id="edit-tab" class="tab-content active">
+                <h2>Editable Tailored LaTeX:</h2>
+                <div id="latex-editor">
+                    <textarea id="latex-code"></textarea>
+                </div>
+            </div>
+            
+            <div id="preview-tab" class="tab-content">
+                <h2>Preview:</h2>
+                <iframe id="preview-frame"></iframe>
+                <button id="download-pdf" class="download-btn" style="display: none;">Download PDF</button>
+            </div>
         </div>
-         <p><small>Note: This tool uses AI and web scraping, results may vary. Review carefully.</small></p>
+        
+        <p><small>Note: This tool uses AI and web scraping, results may vary. Review carefully.</small></p>
     </div>
 
     <!-- Add CodeMirror JS -->
@@ -52,6 +104,8 @@
         const form = document.getElementById('resume-form');
         const statusDiv = document.getElementById('status');
         const latexCode = document.getElementById('latex-code');
+        const previewFrame = document.getElementById('preview-frame');
+        const downloadBtn = document.getElementById('download-pdf');
 
         // Initialize CodeMirror
         const editor = CodeMirror.fromTextArea(latexCode, {
@@ -61,11 +115,82 @@
             lineWrapping: true
         });
 
+        // Tab switching functionality
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', () => {
+                // Remove active class from all buttons and contents
+                document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+                
+                // Add active class to clicked button and corresponding content
+                button.classList.add('active');
+                document.getElementById(`${button.dataset.tab}-tab`).classList.add('active');
+                
+                // If switching to preview tab, update preview
+                if (button.dataset.tab === 'preview') {
+                    updatePreview();
+                }
+            });
+        });
+
+        // Function to update preview
+        function updatePreview() {
+            const latex = editor.getValue();
+            console.log("Updating preview with LaTeX content:", latex);
+            if (!latex) {
+                console.log("No LaTeX content to preview");
+                return;
+            }
+
+            // Create a form to submit the LaTeX content
+            const formData = new FormData();
+            formData.append('latex', latex);
+            console.log("FormData created with LaTeX content");
+
+            // Send to backend for preview
+            console.log("Sending preview request to backend...");
+            fetch('/preview', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                console.log("Received response:", response.status);
+                return response.json();
+            })
+            .then(data => {
+                console.log("Response data:", data);
+                if (data.error) {
+                    console.error("Preview error:", data.error);
+                    let errorMessage = `Preview Error: ${data.error}`;
+                    if (data.details) {
+                        errorMessage += `\n\nDetails:\n${data.details}`;
+                    }
+                    statusDiv.textContent = errorMessage;
+                    statusDiv.className = 'error';
+                    statusDiv.style.whiteSpace = 'pre-wrap'; // Preserve line breaks in error message
+                    downloadBtn.style.display = 'none';
+                } else {
+                    console.log("Preview successful, updating iframe and download button");
+                    // Update preview iframe with the PDF URL
+                    previewFrame.src = data.preview_url;
+                    downloadBtn.style.display = 'block';
+                    downloadBtn.onclick = () => window.location.href = data.download_url;
+                }
+            })
+            .catch(error => {
+                console.error('Preview Error:', error);
+                statusDiv.textContent = 'Error generating preview.';
+                statusDiv.className = 'error';
+                downloadBtn.style.display = 'none';
+            });
+        }
+
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
             statusDiv.textContent = 'Processing... Please wait.';
             statusDiv.className = ''; // Reset class
             editor.setValue(''); // Clear previous results
+            downloadBtn.style.display = 'none'; // Hide download button
 
             const formData = new FormData(form);
 
@@ -80,6 +205,10 @@
                 if (response.ok) {
                     editor.setValue(result.latex || ''); // Set LaTeX content in editor
                     statusDiv.textContent = result.message || 'Tailoring complete. Review the LaTeX below.';
+                    // Update preview if we're on the preview tab
+                    if (document.querySelector('[data-tab="preview"]').classList.contains('active')) {
+                        updatePreview();
+                    }
                 } else {
                     statusDiv.textContent = `Error: ${result.error || 'Unknown error'}`;
                     statusDiv.className = 'error';

@@ -8,9 +8,13 @@ import PyPDF2  # PyPDF2
 import requests
 from bs4 import BeautifulSoup
 import google.generativeai as genai
-from flask import Flask, request, render_template, jsonify
+from flask import Flask, request, render_template, jsonify, send_file
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename # For secure file handling
+import subprocess
+import tempfile
+import uuid
+import shutil
 
 # --- Configuration ---
 load_dotenv()  # Load environment variables from .env file
@@ -222,55 +226,34 @@ def convert_to_latex(parsed_data):
     if not parsed_data:
         return "ERROR: No parsed data provided for LaTeX conversion."
 
-    # --- Basic LaTeX Resume Template ---
+    # --- Minimal LaTeX Resume Template ---
     latex_string = r"""
-\documentclass[letterpaper,11pt]{article}
-\usepackage{latexsym}
-\usepackage[empty]{fullpage} % Use full page
-\usepackage{titlesec}
-\usepackage{marvosym} % For symbols like email, phone
-\usepackage[usenames,dvipsnames]{color}
-\usepackage{verbatim}
-\usepackage{enumitem} % For customizing lists
-\usepackage[hidelinks]{hyperref} % For clickable links without boxes
-\usepackage{fancyhdr}
-\usepackage[english]{babel}
-\usepackage{charter} % Nice font
-\usepackage[T1]{fontenc}
-\usepackage{tabularx}
-\usepackage{amsmath} % Required for \text
-\usepackage{amsfonts}
-\usepackage{amssymb}
-\usepackage{graphicx}
-\usepackage{geometry} % For margin control
-\geometry{a4paper, left=0.75in, right=0.75in, top=0.6in, bottom=0.6in} % Adjust margins
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
 
-\pagestyle{fancy}
-\fancyhf{} % Clear header/footer
-\renewcommand{\headrulewidth}{0pt} % No header rule
-\renewcommand{\footrulewidth}{0pt} % No footer rule
-\setlength{\footskip}{40pt} % Space for footer if needed
+% Basic formatting
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.5em}
+\raggedright
 
-\urlstyle{same} % Use default font for URLs
+% Section formatting
+\renewcommand{\section}[1]{
+  \vspace{0.5em}
+  {\large\bfseries #1}
+  \vspace{0.3em}
+  \hrule
+  \vspace{0.5em}
+}
 
-\raggedbottom % Allow flexible bottom margin
-\raggedright % Left-align text
-\setlength{\tabcolsep}{0in} % No padding in tables
+% List formatting
+\renewcommand{\labelitemi}{$\bullet$}
+\setlength{\itemsep}{0.2em}
+\setlength{\parskip}{0.2em}
 
-% --- Section Formatting ---
-\titleformat{\section}{
-  \vspace{-4pt}\scshape\raggedright\large % Small caps, large font, reduced top space
-}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}] % Rule below title
-
-% --- List Formatting ---
-\setlist[itemize]{leftmargin=*, label=\textbullet, nosep} % Compact bulleted lists
-\setlist[enumerate]{leftmargin=*, label=\arabic*., nosep} % Compact numbered lists
-
-%----------HEADING-----------------
 \begin{document}
 
 % --- Attempt to extract Name and Contact from HEADER ---
-% This requires the parser to reliably put contact info in 'HEADER'
 """
     header_content = parsed_data.pop("HEADER", "") # Use and remove header data
     name = "Your Name Here" # Default
@@ -287,15 +270,15 @@ def convert_to_latex(parsed_data):
                 if line:
                     # Basic check for email/phone/linkedin/github/portfolio markers
                     if '@' in line or 'mailto:' in line:
-                        contact_items.append(f"\\Email\ {escape_latex_text(line)}")
+                        contact_items.append(f"Email: {escape_latex_text(line)}")
                     elif re.search(r'(\d{3}[-\.\s]??){2}\d{4}', line): # Basic phone number regex
-                        contact_items.append(f"\\Telefon\ {escape_latex_text(line)}")
+                        contact_items.append(f"Phone: {escape_latex_text(line)}")
                     elif 'linkedin.com' in line:
-                         contact_items.append(f"\\LinkedIn\ \\href{{{line}}}{{{escape_latex_text(line)}}}")
+                        contact_items.append(f"LinkedIn: \\href{{{line}}}{{{escape_latex_text(line)}}}")
                     elif 'github.com' in line:
-                         contact_items.append(f"\\Github\ \\href{{{line}}}{{{escape_latex_text(line)}}}")
+                        contact_items.append(f"GitHub: \\href{{{line}}}{{{escape_latex_text(line)}}}")
                     elif 'http' in line: # Generic website/portfolio
-                         contact_items.append(f"\\Website\ \\href{{{line}}}{{{escape_latex_text(line)}}}")
+                        contact_items.append(f"Website: \\href{{{line}}}{{{escape_latex_text(line)}}}")
                     else:
                         contact_items.append(escape_latex_text(line)) # Address or other info
             contact_info = " \\\\ ".join(contact_items) # Separate contact items with LaTeX newlines
@@ -303,11 +286,11 @@ def convert_to_latex(parsed_data):
     # Add Header block to LaTeX
     latex_string += f"""
 \\begin{{center}}
-    {{\\Huge \\scshape {escape_latex_text(name)}}} % Use extracted name
-    \\vspace{{1pt}} \\\\
+    {{\\Huge {escape_latex_text(name)}}} % Use extracted name
+    \\vspace{{0.5em}} \\\\
     {contact_info} % Add formatted contact info
 \\end{{center}}
-\\vspace{{5pt}} % Space after header
+\\vspace{{1em}}
 """
 
     # --- Add other sections ---
@@ -321,28 +304,19 @@ def convert_to_latex(parsed_data):
             escaped_name = escape_latex_text(section_name.replace('_', ' ').title())
             escaped_content = escape_latex_text(section_content)
 
-            latex_string += f"\n\\section*{{{escaped_name}}}\n"
+            latex_string += f"\n\\section{{{escaped_name}}}\n"
 
             # Attempt to wrap list-like content in itemize
-            # Check if content already contains \item (from escaping bullets)
-            # or if it has multiple lines that don't look like paragraphs
             lines = [line.strip() for line in section_content.split('\n') if line.strip()]
-            is_likely_list = r'\item' in escaped_content or (len(lines) > 1 and len(section_content) / len(lines) < 150) # Heuristic: short lines suggest list
+            is_likely_list = len(lines) > 1 and len(section_content) / len(lines) < 150
 
-            if is_likely_list and not escaped_content.strip().startswith(r'\begin{itemize}'):
-                 # Wrap in itemize if it looks like a list but isn't already wrapped
-                 latex_string += r'\begin{itemize}' + '\n'
-                 # Re-process lines to ensure each starts with \item if needed
-                 for line in lines:
-                     line_escaped = escape_latex_text(line)
-                     if not line_escaped.startswith(r'\item'):
-                         latex_string += r'  \item ' + line_escaped + '\n'
-                     else:
-                         latex_string += '  ' + line_escaped + '\n'
-                 latex_string += r'\end{itemize}' + '\n'
+            if is_likely_list:
+                latex_string += r'\begin{itemize}' + '\n'
+                for line in lines:
+                    latex_string += r'  \item ' + escape_latex_text(line) + '\n'
+                latex_string += r'\end{itemize}' + '\n'
             else:
-                 # Add content as is (potentially with \item already included)
-                 latex_string += f"{escaped_content}\n"
+                latex_string += f"{escaped_content}\n"
 
             processed_sections.add(section_name)
 
@@ -351,8 +325,7 @@ def convert_to_latex(parsed_data):
         if section_name not in processed_sections and section_name != "FULL_TEXT":
             escaped_name = escape_latex_text(section_name.replace('_', ' ').title())
             escaped_content = escape_latex_text(section_content)
-            latex_string += f"\n\\section*{{{escaped_name}}}\n{escaped_content}\n"
-
+            latex_string += f"\n\\section{{{escaped_name}}}\n{escaped_content}\n"
 
     latex_string += "\n\\end{document}\n"
     print("LaTeX conversion complete.")
@@ -590,6 +563,54 @@ def update_latex(original_latex, section_name, tailored_content):
     return updated_latex
 
 
+def check_latex_packages():
+    """Check if required LaTeX packages are installed and install them if needed."""
+    required_packages = [
+        'latex-base',
+        'latex-fonts-recommended',
+        'latex-fonts-extra',
+        'texlive-latex-extra',
+        'texlive-fonts-recommended',
+        'texlive-fonts-extra',
+        'texlive-latex-recommended'
+    ]
+    
+    try:
+        # Check if pdflatex is installed
+        subprocess.run(['pdflatex', '--version'], capture_output=True, check=True)
+        
+        # Try to compile a minimal test document
+        with tempfile.TemporaryDirectory() as temp_dir:
+            test_tex = os.path.join(temp_dir, 'test.tex')
+            with open(test_tex, 'w') as f:
+                f.write(r"""
+\documentclass{article}
+\usepackage{geometry}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\begin{document}
+Test
+\end{document}
+""")
+            try:
+                subprocess.run(['pdflatex', '-interaction=nonstopmode', test_tex], 
+                             cwd=temp_dir, 
+                             capture_output=True, 
+                             check=True)
+                print("LaTeX packages check passed")
+                return True
+            except subprocess.CalledProcessError as e:
+                print(f"LaTeX test compilation failed: {e.stderr}")
+                return False
+    except subprocess.CalledProcessError:
+        print("pdflatex not found")
+        return False
+    except Exception as e:
+        print(f"Error checking LaTeX packages: {e}")
+        return False
+
 # --- Flask Routes ---
 
 @app.route('/')
@@ -723,9 +744,121 @@ def process_resume():
          # This case should ideally not be reached due to earlier checks
          return jsonify({"error": "File processing failed unexpectedly."}), 500
 
+@app.route('/preview', methods=['POST'])
+def preview_latex():
+    """Handles LaTeX preview and PDF generation."""
+    print("Received preview request")
+    latex_content = request.form.get('latex', '').strip()
+    print(f"LaTeX content length: {len(latex_content)}")
+    
+    if not latex_content:
+        print("Error: No LaTeX content provided")
+        return jsonify({"error": "No LaTeX content provided"}), 400
+
+    try:
+        # Create a temporary directory for LaTeX compilation
+        with tempfile.TemporaryDirectory() as temp_dir:
+            print(f"Created temporary directory: {temp_dir}")
+            # Generate unique filenames
+            base_name = str(uuid.uuid4())
+            tex_file = os.path.join(temp_dir, f"{base_name}.tex")
+            pdf_file = os.path.join(temp_dir, f"{base_name}.pdf")
+            log_file = os.path.join(temp_dir, f"{base_name}.log")
+
+            # Write LaTeX content to file
+            with open(tex_file, 'w', encoding='utf-8') as f:
+                f.write(latex_content)
+            print(f"Wrote LaTeX content to: {tex_file}")
+
+            # Compile LaTeX to PDF using pdflatex
+            try:
+                print("Attempting to compile LaTeX...")
+                result = subprocess.run(['pdflatex', '-interaction=nonstopmode', tex_file], 
+                                     cwd=temp_dir, 
+                                     capture_output=True, 
+                                     text=True, 
+                                     check=True)
+                print("LaTeX compilation successful")
+            except subprocess.CalledProcessError as e:
+                print(f"LaTeX compilation failed: {e.stderr}")
+                # Read the log file for more detailed error information
+                error_details = ""
+                if os.path.exists(log_file):
+                    with open(log_file, 'r', encoding='utf-8') as f:
+                        error_details = f.read()
+                    print(f"LaTeX log file contents: {error_details}")
+                return jsonify({
+                    "error": f"LaTeX compilation failed: {e.stderr}",
+                    "details": error_details
+                }), 400
+
+            # Check if PDF was generated
+            if not os.path.exists(pdf_file):
+                print("Error: PDF file was not generated")
+                # Read the log file for error information
+                error_details = ""
+                if os.path.exists(log_file):
+                    with open(log_file, 'r', encoding='utf-8') as f:
+                        error_details = f.read()
+                    print(f"LaTeX log file contents: {error_details}")
+                return jsonify({
+                    "error": "PDF generation failed",
+                    "details": error_details
+                }), 500
+
+            # Create a static directory for PDFs if it doesn't exist
+            static_dir = os.path.join(app.root_path, 'static', 'pdfs')
+            os.makedirs(static_dir, exist_ok=True)
+            print(f"Created static directory: {static_dir}")
+
+            # Copy the PDF to the static directory
+            static_pdf_path = os.path.join(static_dir, f"{base_name}.pdf")
+            with open(pdf_file, 'rb') as src, open(static_pdf_path, 'wb') as dst:
+                dst.write(src.read())
+            print(f"Copied PDF to: {static_pdf_path}")
+
+            # Generate URLs for preview and download
+            preview_url = f"/static/pdfs/{base_name}.pdf"
+            download_url = f"/download/{base_name}.pdf"
+            print(f"Generated URLs - Preview: {preview_url}, Download: {download_url}")
+
+            return jsonify({
+                "preview_url": preview_url,
+                "download_url": download_url
+            })
+
+    except Exception as e:
+        print(f"Error in preview generation: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/download/<filename>')
+def download_pdf(filename):
+    """Handles PDF downloads."""
+    try:
+        pdf_path = os.path.join(app.root_path, 'static', 'pdfs', filename)
+        if not os.path.exists(pdf_path):
+            return jsonify({"error": "PDF not found"}), 404
+        return send_file(pdf_path, as_attachment=True, download_name=filename)
+    except Exception as e:
+        print(f"Error in PDF download: {e}")
+        return jsonify({"error": str(e)}), 500
 
 # --- Main Execution ---
 if __name__ == '__main__':
+    # Check LaTeX packages before starting the server
+    if not check_latex_packages():
+        print("Warning: Required LaTeX packages may not be installed.")
+        print("Please install the following packages:")
+        print("  - texlive-latex-base")
+        print("  - texlive-latex-extra")
+        print("  - texlive-fonts-recommended")
+        print("  - texlive-fonts-extra")
+        print("\nOn macOS: brew install basictex")
+        print("On Ubuntu/Debian: sudo apt-get install texlive-latex-base texlive-latex-extra texlive-fonts-recommended texlive-fonts-extra")
+        print("On Windows: Install MiKTeX or TeX Live")
+    
     # Set host='0.0.0.0' to make it accessible on your network (use with caution)
     # Remove debug=True for production environments
     app.run(debug=True, host='127.0.0.1', port=5100)
