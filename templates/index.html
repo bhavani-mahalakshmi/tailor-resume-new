@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resume Tailor</title>
+    <!-- Add CodeMirror CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/theme/material-darker.min.css">
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; padding: 20px; }
+        .container { max-width: 900px; margin: auto; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; }
+        input[type="file"], input[type="url"], button { padding: 10px; width: 100%; box-sizing: border-box; }
+        button { background-color: #007bff; color: white; border: none; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        #latex-editor { border: 1px solid #ccc; margin-top: 20px; }
+        .CodeMirror { height: 500px; } /* Set height for CodeMirror */
+        #status { margin-top: 15px; font-style: italic; color: #555; }
+        .error { color: red; font-weight: bold;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Resume Tailor</h1>
+        <form id="resume-form">
+            <div class="form-group">
+                <label for="resume">Upload Resume (.pdf or .docx):</label>
+                <input type="file" id="resume" name="resume" accept=".pdf,.docx" required>
+            </div>
+            <div class="form-group">
+                <label for="job_url">Job Description URL:</label>
+                <input type="url" id="job_url" name="job_url" placeholder="https://example.com/job/123" required>
+            </div>
+            <button type="submit">Tailor Resume</button>
+        </form>
+
+        <div id="status"></div>
+
+        <h2>Editable Tailored LaTeX:</h2>
+        <div id="latex-editor">
+            <textarea id="latex-code"></textarea>
+        </div>
+         <p><small>Note: This tool uses AI and web scraping, results may vary. Review carefully.</small></p>
+    </div>
+
+    <!-- Add CodeMirror JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/stex/stex.min.js"></script> <!-- LaTeX mode -->
+    <script>
+        const form = document.getElementById('resume-form');
+        const statusDiv = document.getElementById('status');
+        const latexCode = document.getElementById('latex-code');
+
+        // Initialize CodeMirror
+        const editor = CodeMirror.fromTextArea(latexCode, {
+            lineNumbers: true,
+            mode: 'stex', // LaTeX mode
+            theme: 'material-darker', // Choose a theme
+            lineWrapping: true
+        });
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            statusDiv.textContent = 'Processing... Please wait.';
+            statusDiv.className = ''; // Reset class
+            editor.setValue(''); // Clear previous results
+
+            const formData = new FormData(form);
+
+            try {
+                const response = await fetch('/process', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    editor.setValue(result.latex || ''); // Set LaTeX content in editor
+                    statusDiv.textContent = result.message || 'Tailoring complete. Review the LaTeX below.';
+                } else {
+                    statusDiv.textContent = `Error: ${result.error || 'Unknown error'}`;
+                    statusDiv.className = 'error';
+                }
+            } catch (error) {
+                console.error('Fetch Error:', error);
+                statusDiv.textContent = `Error: Could not connect to the server or process the request. ${error}`;
+                statusDiv.className = 'error';
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Flask", // Descriptive name for the configuration
+            "type": "python",        // Debugger type
+            "request": "launch",     // We are launching the application
+            "module": "flask",       // Tell VS Code to run the 'flask' module
+            "env": {
+                "FLASK_APP": "app.py",          // Points to your main application file
+                "FLASK_DEBUG": "1",             // Enables Flask's debug mode (auto-reload, better error pages)
+                // Add any other environment variables your app needs at runtime,
+                // although python-dotenv should handle the .env file automatically.
+                // Example: "SOME_OTHER_VAR": "value"
+            },
+            "args": [
+                "run",
+                // "--no-debugger", // Uncomment if Flask's web debugger interferes with VS Code's
+                // "--no-reload"    // Uncomment if auto-reloading causes issues with breakpoints
+            ],
+            "jinja": true,           // Enable debugging Jinja templates (like your index.html if it had Flask variables)
+            "console": "integratedTerminal", // Show output in VS Code's integrated terminal
+            "envFile": "${workspaceFolder}/.env" // Explicitly tell debugger to load your .env file
+        }
+    ]
+}

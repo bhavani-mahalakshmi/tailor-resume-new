@@ -1,0 +1,731 @@
+# app.py
+
+import os
+import io
+import re
+import docx  # python-docx
+import PyPDF2  # PyPDF2
+import requests
+from bs4 import BeautifulSoup
+import google.generativeai as genai
+from flask import Flask, request, render_template, jsonify
+from dotenv import load_dotenv
+from werkzeug.utils import secure_filename # For secure file handling
+
+# --- Configuration ---
+load_dotenv()  # Load environment variables from .env file
+
+app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 # Limit file size (e.g., 16MB)
+ALLOWED_EXTENSIONS = {'pdf', 'docx'}
+
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# --- Gemini API Configuration ---
+try:
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    if not gemini_api_key:
+        print("Error: GEMINI_API_KEY not found in .env file.")
+        gemini_model = None
+    else:
+        genai.configure(api_key=gemini_api_key)
+        # Use a free, capable model like gemini-1.5-flash
+        gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+        print("Gemini Model configured successfully.")
+except Exception as e:
+    print(f"Error configuring Gemini API: {e}")
+    gemini_model = None
+
+# --- Helper Functions ---
+
+def allowed_file(filename):
+    """Checks if the uploaded file extension is allowed."""
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def parse_resume(file_path):
+    """
+    Parses resume file (PDF or DOCX) and attempts to extract text and basic sections.
+    Returns a dictionary of sections or {"ERROR": "message"}.
+    """
+    text = ""
+    try:
+        file_ext = file_path.rsplit('.', 1)[1].lower()
+        if file_ext == 'docx':
+            doc = docx.Document(file_path)
+            full_text = [para.text for para in doc.paragraphs]
+            text = '\n'.join(full_text)
+        elif file_ext == 'pdf':
+            try:
+                with open(file_path, 'rb') as f:
+                    reader = PyPDF2.PdfReader(f)
+                    if reader.is_encrypted:
+                         # Attempt to decrypt with an empty password, might fail
+                         try:
+                             reader.decrypt('')
+                         except Exception as decrypt_err:
+                             print(f"Could not decrypt PDF: {decrypt_err}")
+                             return {"ERROR": "Could not decrypt password-protected PDF."}
+
+                    full_text = []
+                    for page_num, page in enumerate(reader.pages):
+                        try:
+                            full_text.append(page.extract_text())
+                        except Exception as page_extract_err:
+                             print(f"Warning: Could not extract text from PDF page {page_num + 1}: {page_extract_err}")
+                             # Optionally add placeholder or skip page
+                    text = '\n'.join(filter(None, full_text)) # Filter out None results if extraction failed on a page
+            except PyPDF2.errors.PdfReadError as pdf_err:
+                 print(f"Error reading PDF: {pdf_err}")
+                 return {"ERROR": f"Invalid or corrupted PDF file: {pdf_err}"}
+        else:
+            return {"ERROR": "Unsupported file type"}
+
+        if not text.strip():
+            return {"ERROR": "Could not extract text from file. It might be image-based, empty, or corrupted."}
+
+        # --- Basic Section Extraction (Improved Heuristic) ---
+        parsed_data = {}
+        # Regex to find potential section headers (e.g., all caps, or Title Case followed by newline)
+        # This is still a heuristic and might misinterpret lines.
+        # Prioritize common section names first.
+        common_sections = [
+            "SUMMARY", "PROFILE", "OBJECTIVE",
+            "EXPERIENCE", "EMPLOYMENT HISTORY", "WORK HISTORY",
+            "EDUCATION",
+            "SKILLS", "TECHNICAL SKILLS", "COMPETENCIES",
+            "PROJECTS",
+            "CERTIFICATIONS", "LICENSES",
+            "AWARDS", "HONORS",
+            "PUBLICATIONS",
+            "REFERENCES" # Often excluded or just a note
+        ]
+        # Normalize text slightly for matching
+        normalized_text = "\n" + text.strip() + "\n" # Add newlines for boundary matching
+        section_indices = {}
+
+        # Find indices of common sections first
+        for section in common_sections:
+            # Search for the section name possibly followed by variations (e.g., space, colon) and newline
+            # Case-insensitive search
+            pattern = re.compile(r'\n\s*(' + re.escape(section) + r'[:\s]*)\n', re.IGNORECASE | re.MULTILINE)
+            match = pattern.search(normalized_text)
+            if match:
+                # Store the start index and the matched header text (preserving original case if possible)
+                section_indices[match.start(1)] = match.group(1).strip()
+
+        # Sort found sections by their appearance order
+        sorted_indices = sorted(section_indices.keys())
+
+        # Extract content between sections
+        last_index = 0
+        current_section_name = "HEADER" # Content before the first recognized section
+
+        for i, index in enumerate(sorted_indices):
+            header_text = section_indices[index]
+            content = normalized_text[last_index:index].strip()
+
+            # Assign content to the previous section name
+            if content:
+                 # Normalize common section names for consistency
+                 normalized_section_name = current_section_name.upper()
+                 if "EXPERIENCE" in normalized_section_name or "EMPLOYMENT" in normalized_section_name or "WORK HISTORY" in normalized_section_name:
+                     normalized_section_name = "EXPERIENCE"
+                 elif "EDUCATION" in normalized_section_name:
+                     normalized_section_name = "EDUCATION"
+                 elif "SKILLS" in normalized_section_name or "TECHNICAL" in normalized_section_name or "COMPETENCIES" in normalized_section_name:
+                     normalized_section_name = "SKILLS"
+                 elif "SUMMARY" in normalized_section_name or "OBJECTIVE" in normalized_section_name or "PROFILE" in normalized_section_name:
+                     normalized_section_name = "SUMMARY"
+                 elif "PROJECTS" in normalized_section_name:
+                     normalized_section_name = "PROJECTS"
+                 # Add more normalizations if needed
+
+                 parsed_data[normalized_section_name] = content
+
+            # Update for the next iteration
+            current_section_name = header_text # Use the found header as the next section name
+            last_index = index + len(header_text) # Start next content search after the header
+
+        # Add the content after the last found section
+        final_content = normalized_text[last_index:].strip()
+        if final_content:
+             # Normalize the last section name as well
+             normalized_section_name = current_section_name.upper()
+             if "EXPERIENCE" in normalized_section_name or "EMPLOYMENT" in normalized_section_name or "WORK HISTORY" in normalized_section_name:
+                 normalized_section_name = "EXPERIENCE"
+             elif "EDUCATION" in normalized_section_name:
+                 normalized_section_name = "EDUCATION"
+             elif "SKILLS" in normalized_section_name or "TECHNICAL" in normalized_section_name or "COMPETENCIES" in normalized_section_name:
+                 normalized_section_name = "SKILLS"
+             elif "SUMMARY" in normalized_section_name or "OBJECTIVE" in normalized_section_name or "PROFILE" in normalized_section_name:
+                 normalized_section_name = "SUMMARY"
+             elif "PROJECTS" in normalized_section_name:
+                 normalized_section_name = "PROJECTS"
+
+             parsed_data[normalized_section_name] = final_content
+
+        # If no sections were found, put everything under "FULL_TEXT"
+        if not parsed_data and text.strip():
+             parsed_data["FULL_TEXT"] = text.strip()
+             # Remove the default "HEADER" if it's empty and we have FULL_TEXT
+             if "HEADER" in parsed_data and not parsed_data["HEADER"]:
+                 del parsed_data["HEADER"]
+
+        # Remove empty sections
+        parsed_data = {k: v for k, v in parsed_data.items() if v and v.strip()}
+
+        print(f"Parsed Sections: {list(parsed_data.keys())}")
+        if not parsed_data:
+             return {"ERROR": "Parsing finished, but no content sections were identified."}
+
+        return parsed_data
+
+    except Exception as e:
+        print(f"Error parsing resume {file_path}: {e}")
+        import traceback
+        traceback.print_exc() # Print detailed traceback for debugging
+        return {"ERROR": f"An unexpected error occurred during parsing: {e}"}
+
+def escape_latex_text(text):
+    """Basic LaTeX escaping for text content."""
+    if not isinstance(text, str):
+        text = str(text)
+    # Order matters here! Escape backslash first.
+    text = text.replace('\\', r'\textbackslash{}')
+    text = text.replace('&', r'\&')
+    text = text.replace('%', r'\%')
+    text = text.replace('$', r'\$')
+    text = text.replace('#', r'\#')
+    text = text.replace('_', r'\_')
+    text = text.replace('{', r'\{')
+    text = text.replace('}', r'\}')
+    text = text.replace('~', r'\textasciitilde{}')
+    text = text.replace('^', r'\textasciicircum{}')
+    # Handle common unicode bullets, converting them to \item
+    text = re.sub(r'^\s*([•●*–-])\s+', r'\\item ', text, flags=re.MULTILINE)
+    # Simple check for existing latex commands to avoid double escaping
+    # This is basic and might not cover all cases
+    if r'\item' not in text and r'\section' not in text and r'\documentclass' not in text:
+         # Convert newlines to LaTeX paragraph breaks (double backslash)
+         # Be careful not to add \\ after list items or section headers
+         # This simple replacement might add \\ where not needed, refinement needed.
+         # text = text.replace('\n', '\\\\ \n') # Often problematic, handle structure instead
+         pass # Let LaTeX handle line breaks within paragraphs naturally for now
+    return text
+
+def convert_to_latex(parsed_data):
+    """Converts parsed resume data into a basic LaTeX string using a template."""
+    if "ERROR" in parsed_data:
+        return parsed_data["ERROR"]
+    if not parsed_data:
+        return "ERROR: No parsed data provided for LaTeX conversion."
+
+    # --- Basic LaTeX Resume Template ---
+    latex_string = r"""
+\documentclass[letterpaper,11pt]{article}
+\usepackage{latexsym}
+\usepackage[empty]{fullpage} % Use full page
+\usepackage{titlesec}
+\usepackage{marvosym} % For symbols like email, phone
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem} % For customizing lists
+\usepackage[hidelinks]{hyperref} % For clickable links without boxes
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{charter} % Nice font
+\usepackage[T1]{fontenc}
+\usepackage{tabularx}
+\usepackage{amsmath} % Required for \text
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{geometry} % For margin control
+\geometry{a4paper, left=0.75in, right=0.75in, top=0.6in, bottom=0.6in} % Adjust margins
+
+\pagestyle{fancy}
+\fancyhf{} % Clear header/footer
+\renewcommand{\headrulewidth}{0pt} % No header rule
+\renewcommand{\footrulewidth}{0pt} % No footer rule
+\setlength{\footskip}{40pt} % Space for footer if needed
+
+\urlstyle{same} % Use default font for URLs
+
+\raggedbottom % Allow flexible bottom margin
+\raggedright % Left-align text
+\setlength{\tabcolsep}{0in} % No padding in tables
+
+% --- Section Formatting ---
+\titleformat{\section}{
+  \vspace{-4pt}\scshape\raggedright\large % Small caps, large font, reduced top space
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}] % Rule below title
+
+% --- List Formatting ---
+\setlist[itemize]{leftmargin=*, label=\textbullet, nosep} % Compact bulleted lists
+\setlist[enumerate]{leftmargin=*, label=\arabic*., nosep} % Compact numbered lists
+
+%----------HEADING-----------------
+\begin{document}
+
+% --- Attempt to extract Name and Contact from HEADER ---
+% This requires the parser to reliably put contact info in 'HEADER'
+"""
+    header_content = parsed_data.pop("HEADER", "") # Use and remove header data
+    name = "Your Name Here" # Default
+    contact_info = "" # Default
+
+    if header_content:
+        lines = header_content.split('\n')
+        if lines:
+            name = lines[0].strip() # Assume first line is name
+            # Try to format remaining lines as contact info
+            contact_items = []
+            for line in lines[1:]:
+                line = line.strip()
+                if line:
+                    # Basic check for email/phone/linkedin/github/portfolio markers
+                    if '@' in line or 'mailto:' in line:
+                        contact_items.append(f"\\Email\ {escape_latex_text(line)}")
+                    elif re.search(r'(\d{3}[-\.\s]??){2}\d{4}', line): # Basic phone number regex
+                        contact_items.append(f"\\Telefon\ {escape_latex_text(line)}")
+                    elif 'linkedin.com' in line:
+                         contact_items.append(f"\\LinkedIn\ \\href{{{line}}}{{{escape_latex_text(line)}}}")
+                    elif 'github.com' in line:
+                         contact_items.append(f"\\Github\ \\href{{{line}}}{{{escape_latex_text(line)}}}")
+                    elif 'http' in line: # Generic website/portfolio
+                         contact_items.append(f"\\Website\ \\href{{{line}}}{{{escape_latex_text(line)}}}")
+                    else:
+                        contact_items.append(escape_latex_text(line)) # Address or other info
+            contact_info = " \\\\ ".join(contact_items) # Separate contact items with LaTeX newlines
+
+    # Add Header block to LaTeX
+    latex_string += f"""
+\\begin{{center}}
+    {{\\Huge \\scshape {escape_latex_text(name)}}} % Use extracted name
+    \\vspace{{1pt}} \\\\
+    {contact_info} % Add formatted contact info
+\\end{{center}}
+\\vspace{{5pt}} % Space after header
+"""
+
+    # --- Add other sections ---
+    # Define order (optional, but improves consistency)
+    section_order = ["SUMMARY", "SKILLS", "EXPERIENCE", "PROJECTS", "EDUCATION", "CERTIFICATIONS", "AWARDS", "PUBLICATIONS"]
+    processed_sections = set()
+
+    for section_name in section_order:
+        if section_name in parsed_data:
+            section_content = parsed_data[section_name]
+            escaped_name = escape_latex_text(section_name.replace('_', ' ').title())
+            escaped_content = escape_latex_text(section_content)
+
+            latex_string += f"\n\\section*{{{escaped_name}}}\n"
+
+            # Attempt to wrap list-like content in itemize
+            # Check if content already contains \item (from escaping bullets)
+            # or if it has multiple lines that don't look like paragraphs
+            lines = [line.strip() for line in section_content.split('\n') if line.strip()]
+            is_likely_list = r'\item' in escaped_content or (len(lines) > 1 and len(section_content) / len(lines) < 150) # Heuristic: short lines suggest list
+
+            if is_likely_list and not escaped_content.strip().startswith(r'\begin{itemize}'):
+                 # Wrap in itemize if it looks like a list but isn't already wrapped
+                 latex_string += r'\begin{itemize}' + '\n'
+                 # Re-process lines to ensure each starts with \item if needed
+                 for line in lines:
+                     line_escaped = escape_latex_text(line)
+                     if not line_escaped.startswith(r'\item'):
+                         latex_string += r'  \item ' + line_escaped + '\n'
+                     else:
+                         latex_string += '  ' + line_escaped + '\n'
+                 latex_string += r'\end{itemize}' + '\n'
+            else:
+                 # Add content as is (potentially with \item already included)
+                 latex_string += f"{escaped_content}\n"
+
+            processed_sections.add(section_name)
+
+    # Add any remaining sections not in the preferred order
+    for section_name, section_content in parsed_data.items():
+        if section_name not in processed_sections and section_name != "FULL_TEXT":
+            escaped_name = escape_latex_text(section_name.replace('_', ' ').title())
+            escaped_content = escape_latex_text(section_content)
+            latex_string += f"\n\\section*{{{escaped_name}}}\n{escaped_content}\n"
+
+
+    latex_string += "\n\\end{document}\n"
+    print("LaTeX conversion complete.")
+    return latex_string
+
+
+def scrape_job_description(url):
+    """Scrapes the main job description text from a URL using basic heuristics."""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Referer': 'https://www.google.com/' # Sometimes helps
+        }
+        response = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
+        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+
+        # Check content type - only parse HTML
+        content_type = response.headers.get('Content-Type', '').lower()
+        if 'html' not in content_type:
+             return f"ERROR: URL points to non-HTML content ({content_type})"
+
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # --- Job Description Extraction Logic (Heuristics - Needs Improvement) ---
+        job_text = ""
+        selectors = [
+            'div[class*="job-description"]', 'div[id*="job-description"]',
+            'div[class*="jobdescription"]', 'div[id*="jobdescription"]',
+            'div[class*="job-details"]', 'div[id*="job-details"]',
+            'div[class*="jobDetails"]', 'div[id*="jobDetails"]',
+            'section[class*="job-description"]', 'article[class*="job-description"]',
+            'div[role="main"]', # Common on some platforms
+            'main'
+        ]
+
+        potential_containers = []
+        for selector in selectors:
+            try:
+                elements = soup.select(selector)
+                if elements:
+                    potential_containers.extend(elements)
+            except Exception as e:
+                print(f"Warning: CSS selector '{selector}' failed: {e}")
+
+
+        if potential_containers:
+            # Find the container with the most text content, preferring deeper elements
+            best_container = max(potential_containers, key=lambda tag: len(tag.get_text(strip=True, separator=' ')))
+            # Clean the chosen container before extracting text
+            for element in best_container(['script', 'style', 'button', 'input', 'nav', 'header', 'footer', 'aside', 'form', 'figure', 'img']):
+                element.decompose()
+            job_text = best_container.get_text(separator='\n', strip=True)
+        else:
+            # Fallback: Get text from body, after cleaning common noise tags
+            print("Warning: Could not find specific job description container via selectors. Falling back to cleaned body text.")
+            body = soup.find('body')
+            if body:
+                for element in body(['script', 'style', 'nav', 'header', 'footer', 'aside', 'form', 'figure', 'img', 'button', 'input', 'svg']):
+                    element.decompose()
+                job_text = body.get_text(separator='\n', strip=True)
+                # Basic cleaning (remove excessive blank lines)
+                job_text = re.sub(r'\n\s*\n', '\n', job_text)
+            else:
+                return "ERROR: Could not find body tag in HTML."
+
+        # Further cleaning: remove short lines that are likely remnants of UI elements
+        job_text_lines = [line for line in job_text.split('\n') if len(line.strip()) > 10 or line.strip().endswith(':')]
+        job_text = '\n'.join(job_text_lines)
+
+
+        if len(job_text) < 150: # Increased threshold
+             print(f"Warning: Extracted text seems too short ({len(job_text)} chars). Scraping might have failed or the description is minimal.")
+             # Consider returning error if too short: return "ERROR: Extracted text too short, likely failed."
+
+        print(f"Scraped job description (length: {len(job_text)} chars)")
+        return job_text
+
+    except requests.exceptions.Timeout:
+        print(f"Error fetching URL {url}: Timeout")
+        return "ERROR: The request timed out."
+    except requests.exceptions.HTTPError as e:
+        print(f"Error fetching URL {url}: HTTP {e.response.status_code}")
+        return f"ERROR: Could not fetch URL (HTTP {e.response.status_code}). Check the URL or website permissions."
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching URL {url}: {e}")
+        return f"ERROR: Could not fetch URL: {e}"
+    except Exception as e:
+        print(f"Error scraping job description: {e}")
+        import traceback
+        traceback.print_exc()
+        return f"ERROR: Failed to scrape or parse the page: {e}"
+
+
+def tailor_section_with_gemini(section_name, section_content, job_description):
+    """Uses Gemini to tailor a resume section based on the job description."""
+    if not gemini_model:
+        return "ERROR: Gemini model not configured."
+    if not section_content or not section_content.strip():
+        return "ERROR: Section content is empty."
+    if not job_description or not job_description.strip():
+        return "ERROR: Job description is empty."
+
+    print(f"Tailoring section '{section_name}' with Gemini...")
+
+    # Construct a more detailed prompt
+    prompt = f"""
+You are an expert resume writer and career coach. Your task is to rewrite the following resume section to be more impactful and specifically tailored to the provided job description.
+
+**Instructions:**
+1.  **Analyze:** Carefully read the original resume section and the job description. Identify key skills, experiences, and keywords from the job description.
+2.  **Rewrite:** Revise the original section to highlight the candidate's experiences and skills that directly match the requirements and preferences mentioned in the job description.
+3.  **Quantify:** Where possible, add quantifiable achievements or suggest places where they could be added (e.g., "Increased X by Y%"). If you add suggestions, clearly mark them, perhaps like [Suggest adding metric for impact].
+4.  **Keywords:** Naturally integrate relevant keywords from the job description into the rewritten text. Avoid keyword stuffing.
+5.  **Action Verbs:** Use strong action verbs to start bullet points or describe accomplishments.
+6.  **Format:** Output *only* the rewritten resume section content. Use standard LaTeX formatting for lists (e.g., `\\item First point.\n\\item Second point.`). Do not include explanations, apologies, or introductory phrases like "Here is the rewritten section:". Ensure the output is ready to be directly inserted into a LaTeX document under a `\\section*{{{section_name}}}` command. If the original was a paragraph, keep it as a paragraph unless a list format is clearly better for the content and job description. If the original was a list, keep it as a list using `\\item`.
+7.  **Conciseness:** Keep the language clear, concise, and professional.
+
+**Job Description:**
+---
+{job_description[:3000]}
+---
+(Job description truncated if too long)
+
+**Original Resume Section ({section_name}):**
+---
+{section_content}
+---
+
+**Rewritten Resume Section ({section_name}) (LaTeX format only):**
+"""
+
+    try:
+        # Configure safety settings to be less restrictive if appropriate, but be cautious.
+        # Example: safety_settings={'HARASSMENT': 'BLOCK_NONE'} # Use with care
+        response = gemini_model.generate_content(
+            prompt,
+            # safety_settings=... # Optional: Adjust safety settings if needed
+            generation_config=genai.types.GenerationConfig(
+                # candidate_count=1, # Default is 1
+                # stop_sequences=['\n\n\n'], # Optional: Stop generation early
+                max_output_tokens=1024, # Limit output length
+                temperature=0.7 # Adjust creativity (0.0=deterministic, 1.0=creative)
+            )
+        )
+
+        # Check response validity and safety feedback
+        if not response.candidates:
+             feedback = response.prompt_feedback
+             print(f"Gemini Warning: No candidates generated. Feedback: {feedback}")
+             # Check if blocked due to safety
+             if feedback.block_reason == 'SAFETY':
+                 return f"ERROR: Content generation blocked due to safety concerns: {feedback.safety_ratings}"
+             else:
+                 return f"ERROR: AI model did not generate a response. Reason: {feedback.block_reason or 'Unknown'}"
+
+        # Accessing text safely
+        if response.candidates[0].content.parts:
+            tailored_content = response.text.strip()
+            if not tailored_content:
+                 print("Gemini Warning: Generated content is empty.")
+                 return "ERROR: AI model returned empty content."
+            # Basic check for refusal patterns (sometimes the model might still include them)
+            refusal_patterns = ["i cannot fulfill this request", "i am unable to", "i cannot rewrite", "sorry", "apologies"]
+            if any(pattern in tailored_content.lower()[:100] for pattern in refusal_patterns):
+                 print(f"Gemini Warning: Potential refusal detected in response: {tailored_content[:150]}...")
+                 # Return error or original content? Let's return an error for clarity.
+                 return f"ERROR: AI model may have refused the request. Response started with: {tailored_content[:100]}"
+
+            print(f"Gemini tailoring successful for section '{section_name}'.")
+            return tailored_content
+        else:
+             # This case might happen if the candidate exists but has no content parts
+             print(f"Gemini Warning: Response candidate has no content parts. Candidate: {response.candidates[0]}")
+             return "ERROR: AI model response structure invalid (no content parts)."
+
+
+    except Exception as e:
+        print(f"Error calling Gemini API for section '{section_name}': {e}")
+        import traceback
+        traceback.print_exc()
+        # Check for specific API errors if the library provides them
+        # Example: if isinstance(e, google.api_core.exceptions.ResourceExhausted): return "ERROR: API quota exceeded."
+        return f"ERROR: Failed to interact with AI model: {e}"
+
+
+def update_latex(original_latex, section_name, tailored_content):
+    """
+    Updates a specific section in the LaTeX string with tailored content.
+    Relies on the section format: \\section*{SECTION NAME} ... content ... \\section*{NEXT SECTION} or \\end{document}
+    """
+    # Prepare the section name as it appears in the LaTeX \section*{} command
+    # This must match the formatting used in convert_to_latex (escaped, title case)
+    latex_section_name_escaped = escape_latex_text(section_name.replace('_', ' ').title())
+    section_start_marker = f"\\section*{{{latex_section_name_escaped}}}"
+
+    # Use regex for more robust finding, ignoring whitespace variations around the marker
+    # Pattern: marker, followed by optional whitespace, then capture the content until the next \section* or \end{document}
+    # DOTALL allows '.' to match newlines. Use non-greedy '.*?'
+    pattern = re.compile(
+        re.escape(section_start_marker) + r"\s*(.*?)\s*(?=\\section\*|\\end\{document\})",
+        re.DOTALL | re.IGNORECASE # Ignore case for section marker just in case
+    )
+
+    match = pattern.search(original_latex)
+
+    if not match:
+        print(f"Warning: Could not find section marker '{section_start_marker}' or its content block in LaTeX for section '{section_name}'. Skipping update.")
+        return original_latex
+
+    # The tailored content should replace the matched content (group 1)
+    # We replace the entire matched block (marker + old content) with marker + new content
+    start_index = match.start()
+    end_index = match.end(1) # End of the content group (group 1)
+
+    # Ensure tailored content has appropriate spacing (e.g., newline after marker)
+    formatted_tailored_content = "\n" + tailored_content.strip() + "\n"
+
+    # Replace the old content part (group 1) with the new tailored content
+    # Reconstruct: part before match + marker + new content + part after the matched content
+    # This is safer than replacing the whole match block if spacing is tricky
+    updated_latex = original_latex[:match.start(1)] + formatted_tailored_content + original_latex[match.end(1):]
+
+
+    # Alternative using re.sub (simpler if the pattern correctly captures only content)
+    # replacement_string = section_start_marker + "\n" + tailored_content.strip() + "\n"
+    # updated_latex, num_replacements = pattern.sub(replacement_string, original_latex, count=1)
+    # if num_replacements == 0:
+    #     print(f"Warning: Regex substitution failed for section '{section_name}'.")
+    #     return original_latex
+
+
+    print(f"Successfully updated section: {section_name}")
+    return updated_latex
+
+
+# --- Flask Routes ---
+
+@app.route('/')
+def index():
+    """Serves the main HTML page."""
+    return render_template('index.html')
+
+@app.route('/process', methods=['POST'])
+def process_resume():
+    """Handles file upload, URL, parsing, tailoring, and returns tailored LaTeX."""
+    if 'resume' not in request.files:
+        return jsonify({"error": "No resume file part in the request."}), 400
+
+    file = request.files['resume']
+    job_url = request.form.get('job_url', '').strip()
+
+    if file.filename == '':
+        return jsonify({"error": "No file selected."}), 400
+    if not job_url:
+        return jsonify({"error": "Job description URL is required."}), 400
+
+    # Validate URL format (basic check)
+    if not (job_url.startswith('http://') or job_url.startswith('https://')):
+         return jsonify({"error": "Invalid URL format. Please include http:// or https://"}), 400
+
+    if file and allowed_file(file.filename):
+        # Secure the filename before saving
+        filename = secure_filename(file.filename)
+        if not filename: # secure_filename can return empty string for dangerous names
+             filename = "uploaded_resume." + file.filename.rsplit('.', 1)[1].lower() # Fallback name
+
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+
+        try:
+            file.save(file_path)
+            print(f"File saved to: {file_path}")
+
+            # --- Core Processing Pipeline ---
+            # 1. Parse Resume
+            print("\n--- Parsing Resume ---")
+            parsed_data = parse_resume(file_path)
+            if "ERROR" in parsed_data:
+                 return jsonify({"error": f"Parsing failed: {parsed_data['ERROR']}"}), 400 # Use 400 for client-side errors like bad file
+            if not parsed_data:
+                 return jsonify({"error": "Parsing failed: No sections found in the resume."}), 400
+
+            # Keep a copy for the tailoring loop, as convert_to_latex might modify it (e.g., pop header)
+            parsed_data_for_tailoring = parsed_data.copy()
+
+            # 2. Convert to Initial LaTeX
+            print("\n--- Converting to LaTeX ---")
+            initial_latex = convert_to_latex(parsed_data) # parsed_data might be modified here
+            if "ERROR" in initial_latex:
+                 return jsonify({"error": f"LaTeX conversion failed: {initial_latex}"}), 500 # Internal server error
+            if r"\section*{" not in initial_latex and len(initial_latex) < 500:
+                 print("Warning: Initial LaTeX seems minimal. Conversion might have issues.")
+                 # Proceed but maybe add a warning to the user later?
+
+            # 3. Scrape Job Description
+            print("\n--- Scraping Job Description ---")
+            job_description = scrape_job_description(job_url)
+            user_message = "" # Message to send back to the user
+            if "ERROR" in job_description:
+                 print(f"Warning: Job description scraping failed: {job_description}")
+                 user_message = f"Warning: Could not scrape job description ({job_description}). Displaying untailored LaTeX."
+                 # Return initial LaTeX if scraping fails, but let user know
+                 return jsonify({"latex": initial_latex, "message": user_message})
+            elif len(job_description) < 150:
+                 user_message = "Warning: Scraped job description seems very short. Tailoring quality may be affected. "
+
+
+            # 4. Tailor each section using Gemini
+            updated_latex = initial_latex
+            print("\n--- Starting AI Tailoring Loop ---")
+            if not gemini_model:
+                 user_message += "AI model is not configured; skipping tailoring."
+                 print("Skipping tailoring loop: Gemini model not available.")
+            else:
+                # Define which sections to attempt tailoring (adjust as needed)
+                sections_to_tailor = ["SUMMARY", "EXPERIENCE", "SKILLS", "PROJECTS"]
+                tailoring_errors = []
+
+                for section_name in sections_to_tailor:
+                    if section_name in parsed_data_for_tailoring:
+                        section_content = parsed_data_for_tailoring[section_name]
+                        if isinstance(section_content, str) and len(section_content.strip()) > 30: # Check if content is substantial
+                            tailored_content = tailor_section_with_gemini(section_name, section_content, job_description)
+
+                            if "ERROR" not in tailored_content and tailored_content.strip():
+                                # 5. Update LaTeX string
+                                updated_latex = update_latex(updated_latex, section_name, tailored_content)
+                            else:
+                                print(f"Skipping update for section '{section_name}' due to tailoring error or empty response: {tailored_content[:100]}...")
+                                tailoring_errors.append(f"Could not tailor '{section_name}': {tailored_content}")
+                        else:
+                            print(f"Skipping section '{section_name}' - content too short or not suitable.")
+                    else:
+                         print(f"Skipping section '{section_name}' - not found in parsed data.")
+
+                if tailoring_errors:
+                     user_message += f"Note: Some sections could not be tailored ({len(tailoring_errors)} errors occurred). "
+                if user_message: # If we had scraping warnings or tailoring errors
+                     user_message += "Tailoring complete for other sections."
+                else:
+                     user_message = "Tailoring complete. Review the LaTeX below."
+
+
+            print("--- Tailoring Loop Complete ---")
+
+            # 6. Return final LaTeX
+            print("Processing complete. Returning final LaTeX.")
+            return jsonify({"latex": updated_latex, "message": user_message.strip()})
+
+        except Exception as e:
+            print(f"An unexpected error occurred during processing: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": f"An internal server error occurred: {e}"}), 500
+        finally:
+            # Clean up the uploaded file in all cases (success or error)
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    print(f"Removed temporary file: {file_path}")
+                except OSError as e:
+                    print(f"Error removing file {file_path}: {e}")
+
+    elif not allowed_file(file.filename):
+         return jsonify({"error": f"Invalid file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
+    else:
+         # This case should ideally not be reached due to earlier checks
+         return jsonify({"error": "File processing failed unexpectedly."}), 500
+
+
+# --- Main Execution ---
+if __name__ == '__main__':
+    # Set host='0.0.0.0' to make it accessible on your network (use with caution)
+    # Remove debug=True for production environments
+    app.run(debug=True, host='127.0.0.1', port=5100)
