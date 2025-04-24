@@ -15,6 +15,9 @@ import subprocess
 import tempfile
 import uuid
 import shutil
+import time
+from threading import Timer
+import atexit
 
 # --- Configuration ---
 load_dotenv()  # Load environment variables from .env file
@@ -611,6 +614,18 @@ Test
         print(f"Error checking LaTeX packages: {e}")
         return False
 
+def cleanup_pdf_file(file_path, delay=300):  # 5 minutes delay
+    """Delete a PDF file after a specified delay."""
+    def delete_file():
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                print(f"Cleaned up PDF file: {file_path}")
+        except Exception as e:
+            print(f"Error cleaning up PDF file {file_path}: {e}")
+    
+    Timer(delay, delete_file).start()
+
 # --- Flask Routes ---
 
 @app.route('/')
@@ -817,6 +832,9 @@ def preview_latex():
                 dst.write(src.read())
             print(f"Copied PDF to: {static_pdf_path}")
 
+            # Schedule cleanup of the PDF file
+            cleanup_pdf_file(static_pdf_path)
+
             # Generate URLs for preview and download
             preview_url = f"/static/pdfs/{base_name}.pdf"
             download_url = f"/download/{base_name}.pdf"
@@ -840,10 +858,26 @@ def download_pdf(filename):
         pdf_path = os.path.join(app.root_path, 'static', 'pdfs', filename)
         if not os.path.exists(pdf_path):
             return jsonify({"error": "PDF not found"}), 404
+        
+        # Schedule cleanup after download
+        cleanup_pdf_file(pdf_path)
+        
         return send_file(pdf_path, as_attachment=True, download_name=filename)
     except Exception as e:
         print(f"Error in PDF download: {e}")
         return jsonify({"error": str(e)}), 500
+
+# Add a cleanup function to run on server shutdown
+@atexit.register
+def cleanup_on_exit():
+    """Clean up all PDF files in the static/pdfs directory on server shutdown."""
+    pdf_dir = os.path.join(app.root_path, 'static', 'pdfs')
+    if os.path.exists(pdf_dir):
+        try:
+            shutil.rmtree(pdf_dir)
+            print(f"Cleaned up PDF directory: {pdf_dir}")
+        except Exception as e:
+            print(f"Error cleaning up PDF directory: {e}")
 
 # --- Main Execution ---
 if __name__ == '__main__':
