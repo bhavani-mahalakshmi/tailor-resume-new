@@ -232,27 +232,34 @@ def convert_to_latex(parsed_data):
     # --- Minimal LaTeX Resume Template ---
     latex_string = r"""
 \documentclass[11pt]{article}
-\usepackage[margin=1in]{geometry}
+\usepackage[margin=0.75in]{geometry}
 \usepackage{hyperref}
 
 % Basic formatting
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{0.5em}
+\setlength{\parskip}{0.3em}
 \raggedright
 
 % Section formatting
 \renewcommand{\section}[1]{
-  \vspace{0.5em}
-  {\large\bfseries #1}
   \vspace{0.3em}
+  {\large\bfseries #1}
+  \vspace{0.2em}
   \hrule
-  \vspace{0.5em}
+  \vspace{0.3em}
+}
+
+% Experience heading formatting
+\newcommand{\experience}[2]{
+  \vspace{0.2em}
+  {\bfseries #1} \hfill #2
+  \vspace{0.1em}
 }
 
 % List formatting
 \renewcommand{\labelitemi}{$\bullet$}
-\setlength{\itemsep}{0.2em}
-\setlength{\parskip}{0.2em}
+\setlength{\itemsep}{0.1em}
+\setlength{\parskip}{0.1em}
 
 \begin{document}
 
@@ -289,16 +296,16 @@ def convert_to_latex(parsed_data):
     # Add Header block to LaTeX
     latex_string += f"""
 \\begin{{center}}
-    {{\\Huge {escape_latex_text(name)}}} % Use extracted name
-    \\vspace{{0.5em}} \\\\
+    {{\\Large {escape_latex_text(name)}}} % Use extracted name
+    \\vspace{{0.3em}} \\\\
     {contact_info} % Add formatted contact info
 \\end{{center}}
-\\vspace{{1em}}
+\\vspace{{0.5em}}
 """
 
     # --- Add other sections ---
     # Define order (optional, but improves consistency)
-    section_order = ["SUMMARY", "SKILLS", "EXPERIENCE", "PROJECTS", "EDUCATION", "CERTIFICATIONS", "AWARDS", "PUBLICATIONS"]
+    section_order = ["SUMMARY", "KEY SKILLS", "EXPERIENCE", "PROJECTS", "EDUCATION", "CERTIFICATIONS", "AWARDS", "PUBLICATIONS"]
     processed_sections = set()
 
     for section_name in section_order:
@@ -309,17 +316,41 @@ def convert_to_latex(parsed_data):
 
             latex_string += f"\n\\section{{{escaped_name}}}\n"
 
-            # Attempt to wrap list-like content in itemize
-            lines = [line.strip() for line in section_content.split('\n') if line.strip()]
-            is_likely_list = len(lines) > 1 and len(section_content) / len(lines) < 150
-
-            if is_likely_list:
-                latex_string += r'\begin{itemize}' + '\n'
-                for line in lines:
-                    latex_string += r'  \item ' + escape_latex_text(line) + '\n'
-                latex_string += r'\end{itemize}' + '\n'
+            # Special handling for Experience section
+            if section_name == "EXPERIENCE":
+                # Split content into individual experiences
+                experiences = section_content.split('\n\n')
+                for exp in experiences:
+                    if exp.strip():
+                        # Try to extract title and date
+                        lines = exp.strip().split('\n')
+                        if len(lines) >= 2:
+                            title = lines[0].strip()
+                            date = lines[1].strip()
+                            # Add experience heading
+                            latex_string += f"\\experience{{{escape_latex_text(title)}}}{{{escape_latex_text(date)}}}\n"
+                            # Add remaining content as bullet points
+                            if len(lines) > 2:
+                                latex_string += r'\begin{itemize}' + '\n'
+                                for line in lines[2:]:
+                                    if line.strip():
+                                        latex_string += r'  \item ' + escape_latex_text(line.strip()) + '\n'
+                                latex_string += r'\end{itemize}' + '\n'
+                        else:
+                            # If format is unexpected, add as is
+                            latex_string += f"{escaped_content}\n"
             else:
-                latex_string += f"{escaped_content}\n"
+                # For other sections, use standard formatting
+                lines = [line.strip() for line in section_content.split('\n') if line.strip()]
+                is_likely_list = len(lines) > 1 and len(section_content) / len(lines) < 150
+
+                if is_likely_list:
+                    latex_string += r'\begin{itemize}' + '\n'
+                    for line in lines:
+                        latex_string += r'  \item ' + escape_latex_text(line) + '\n'
+                    latex_string += r'\end{itemize}' + '\n'
+                else:
+                    latex_string += f"{escaped_content}\n"
 
             processed_sections.add(section_name)
 
@@ -440,13 +471,14 @@ def tailor_section_with_gemini(section_name, section_content, job_description):
 You are an expert resume writer and career coach. Your task is to rewrite the following resume section to be more impactful and specifically tailored to the provided job description.
 
 **Instructions:**
-1.  **Analyze:** Carefully read the original resume section and the job description. Identify key skills, experiences, and keywords from the job description.
-2.  **Rewrite:** Revise the original section to highlight the candidate's experiences and skills that directly match the requirements and preferences mentioned in the job description.
-3.  **Quantify:** Where possible, add quantifiable achievements or suggest places where they could be added (e.g., "Increased X by Y%"). If you add suggestions, clearly mark them, perhaps like [Suggest adding metric for impact].
-4.  **Keywords:** Naturally integrate relevant keywords from the job description into the rewritten text. Avoid keyword stuffing.
-5.  **Action Verbs:** Use strong action verbs to start bullet points or describe accomplishments.
-6.  **Format:** Output *only* the rewritten resume section content. Use standard LaTeX formatting for lists (e.g., `\\item First point.\n\\item Second point.`). Do not include explanations, apologies, or introductory phrases like "Here is the rewritten section:". Ensure the output is ready to be directly inserted into a LaTeX document under a `\\section*{{{section_name}}}` command. If the original was a paragraph, keep it as a paragraph unless a list format is clearly better for the content and job description. If the original was a list, keep it as a list using `\\item`.
-7.  **Conciseness:** Keep the language clear, concise, and professional.
+1. **Analyze:** Carefully read the original resume section and the job description. Identify key skills, experiences, and keywords from the job description.
+2. **Rewrite:** Revise the original section to highlight the candidate's experiences and skills that directly match the requirements and preferences mentioned in the job description.
+3. **Keywords:** Naturally integrate relevant keywords from the job description into the rewritten text. Avoid keyword stuffing.
+4. **Action Verbs:** Use strong action verbs to start bullet points or describe accomplishments.
+5. **Format:** Output *only* the content of the section, without any section headers or titles. Use standard LaTeX formatting for lists (e.g., `\\item First point.\\n\\item Second point.`). Do not include explanations, apologies, or introductory phrases. The content will be automatically placed under the appropriate section header. If the original was a paragraph, keep it as a paragraph unless a list format is clearly better for the content and job description. If the original was a list, keep it as a list using `\\item`.
+6. **Conciseness:** Keep the language clear, concise, and professional. Aim for 1-2 pages total resume length.
+7. **No Suggestions:** Do not include any suggestions or placeholders. Only include actual content.
+8. **No Headers:** Do not include any section headers or titles in your output. Only provide the content that should go under the section.
 
 **Job Description:**
 ---
@@ -459,108 +491,94 @@ You are an expert resume writer and career coach. Your task is to rewrite the fo
 {section_content}
 ---
 
-**Rewritten Resume Section ({section_name}) (LaTeX format only):**
+**Rewritten Resume Section Content (LaTeX format only, no headers):**
 """
 
     try:
-        # Configure safety settings to be less restrictive if appropriate, but be cautious.
-        # Example: safety_settings={'HARASSMENT': 'BLOCK_NONE'} # Use with care
         response = gemini_model.generate_content(
             prompt,
-            # safety_settings=... # Optional: Adjust safety settings if needed
             generation_config=genai.types.GenerationConfig(
-                # candidate_count=1, # Default is 1
-                # stop_sequences=['\n\n\n'], # Optional: Stop generation early
-                max_output_tokens=1024, # Limit output length
-                temperature=0.7 # Adjust creativity (0.0=deterministic, 1.0=creative)
+                max_output_tokens=1024,
+                temperature=0.7
             )
         )
 
-        # Check response validity and safety feedback
         if not response.candidates:
-             feedback = response.prompt_feedback
-             print(f"Gemini Warning: No candidates generated. Feedback: {feedback}")
-             # Check if blocked due to safety
-             if feedback.block_reason == 'SAFETY':
-                 return f"ERROR: Content generation blocked due to safety concerns: {feedback.safety_ratings}"
-             else:
-                 return f"ERROR: AI model did not generate a response. Reason: {feedback.block_reason or 'Unknown'}"
+            feedback = response.prompt_feedback
+            print(f"Gemini Warning: No candidates generated. Feedback: {feedback}")
+            if feedback.block_reason == 'SAFETY':
+                return f"ERROR: Content generation blocked due to safety concerns: {feedback.safety_ratings}"
+            else:
+                return f"ERROR: AI model did not generate a response. Reason: {feedback.block_reason or 'Unknown'}"
 
-        # Accessing text safely
         if response.candidates[0].content.parts:
             tailored_content = response.text.strip()
             if not tailored_content:
-                 print("Gemini Warning: Generated content is empty.")
-                 return "ERROR: AI model returned empty content."
-            # Basic check for refusal patterns (sometimes the model might still include them)
-            refusal_patterns = ["i cannot fulfill this request", "i am unable to", "i cannot rewrite", "sorry", "apologies"]
-            if any(pattern in tailored_content.lower()[:100] for pattern in refusal_patterns):
-                 print(f"Gemini Warning: Potential refusal detected in response: {tailored_content[:150]}...")
-                 # Return error or original content? Let's return an error for clarity.
-                 return f"ERROR: AI model may have refused the request. Response started with: {tailored_content[:100]}"
+                print("Gemini Warning: Generated content is empty.")
+                return "ERROR: AI model returned empty content."
+
+            # Remove any suggestion patterns
+            tailored_content = re.sub(r'\[Suggest.*?\]', '', tailored_content)
+            tailored_content = re.sub(r'\(e\.g\.,.*?\)', '', tailored_content)
+            tailored_content = re.sub(r'\(add.*?\)', '', tailored_content)
+
+            # Remove any section headers that might have been included
+            tailored_content = re.sub(r'^\\section.*?$', '', tailored_content, flags=re.MULTILINE)
+            tailored_content = re.sub(r'^\\section\*.*?$', '', tailored_content, flags=re.MULTILINE)
 
             print(f"Gemini tailoring successful for section '{section_name}'.")
             return tailored_content
         else:
-             # This case might happen if the candidate exists but has no content parts
-             print(f"Gemini Warning: Response candidate has no content parts. Candidate: {response.candidates[0]}")
-             return "ERROR: AI model response structure invalid (no content parts)."
-
+            print(f"Gemini Warning: Response candidate has no content parts. Candidate: {response.candidates[0]}")
+            return "ERROR: AI model response structure invalid (no content parts)."
 
     except Exception as e:
         print(f"Error calling Gemini API for section '{section_name}': {e}")
         import traceback
         traceback.print_exc()
-        # Check for specific API errors if the library provides them
-        # Example: if isinstance(e, google.api_core.exceptions.ResourceExhausted): return "ERROR: API quota exceeded."
         return f"ERROR: Failed to interact with AI model: {e}"
 
 
 def update_latex(original_latex, section_name, tailored_content):
     """
     Updates a specific section in the LaTeX string with tailored content.
-    Relies on the section format: \\section*{SECTION NAME} ... content ... \\section*{NEXT SECTION} or \\end{document}
+    Handles both \section and \section* commands.
     """
-    # Prepare the section name as it appears in the LaTeX \section*{} command
-    # This must match the formatting used in convert_to_latex (escaped, title case)
-    latex_section_name_escaped = escape_latex_text(section_name.replace('_', ' ').title())
-    section_start_marker = f"\\section*{{{latex_section_name_escaped}}}"
-
+    # Prepare the section name as it appears in the LaTeX \section command
+    latex_section_name = section_name.replace('_', ' ').title()
+    
+    # Try both \section and \section* patterns
+    section_patterns = [
+        f"\\\\section\\*{{{latex_section_name}}}",  # \section*{Section Name}
+        f"\\\\section{{{latex_section_name}}}"      # \section{Section Name}
+    ]
+    
+    # Combine patterns with OR operator
+    pattern = '|'.join(section_patterns)
+    
     # Use regex for more robust finding, ignoring whitespace variations around the marker
-    # Pattern: marker, followed by optional whitespace, then capture the content until the next \section* or \end{document}
+    # Pattern: marker, followed by optional whitespace, then capture the content until the next \section or \end{document}
     # DOTALL allows '.' to match newlines. Use non-greedy '.*?'
-    pattern = re.compile(
-        re.escape(section_start_marker) + r"\s*(.*?)\s*(?=\\section\*|\\end\{document\})",
-        re.DOTALL | re.IGNORECASE # Ignore case for section marker just in case
+    full_pattern = re.compile(
+        f"({pattern})\\s*(.*?)\\s*(?=\\\\section|\\\\end{{document}})",
+        re.DOTALL | re.IGNORECASE  # Ignore case for section marker
     )
 
-    match = pattern.search(original_latex)
+    match = full_pattern.search(original_latex)
 
     if not match:
-        print(f"Warning: Could not find section marker '{section_start_marker}' or its content block in LaTeX for section '{section_name}'. Skipping update.")
+        print(f"Warning: Could not find section marker for '{section_name}' in LaTeX. Skipping update.")
         return original_latex
 
-    # The tailored content should replace the matched content (group 1)
-    # We replace the entire matched block (marker + old content) with marker + new content
-    start_index = match.start()
-    end_index = match.end(1) # End of the content group (group 1)
+    # Get the section marker and content
+    section_marker = match.group(1)
+    old_content = match.group(2)
 
-    # Ensure tailored content has appropriate spacing (e.g., newline after marker)
+    # Ensure tailored content has appropriate spacing
     formatted_tailored_content = "\n" + tailored_content.strip() + "\n"
 
-    # Replace the old content part (group 1) with the new tailored content
-    # Reconstruct: part before match + marker + new content + part after the matched content
-    # This is safer than replacing the whole match block if spacing is tricky
-    updated_latex = original_latex[:match.start(1)] + formatted_tailored_content + original_latex[match.end(1):]
-
-
-    # Alternative using re.sub (simpler if the pattern correctly captures only content)
-    # replacement_string = section_start_marker + "\n" + tailored_content.strip() + "\n"
-    # updated_latex, num_replacements = pattern.sub(replacement_string, original_latex, count=1)
-    # if num_replacements == 0:
-    #     print(f"Warning: Regex substitution failed for section '{section_name}'.")
-    #     return original_latex
-
+    # Replace the old content with the new tailored content, keeping the section marker
+    updated_latex = original_latex[:match.start(2)] + formatted_tailored_content + original_latex[match.end(2):]
 
     print(f"Successfully updated section: {section_name}")
     return updated_latex
@@ -641,14 +659,15 @@ def process_resume():
 
     file = request.files['resume']
     job_url = request.form.get('job_url', '').strip()
+    manual_jd = request.form.get('job_description', '').strip()
 
     if file.filename == '':
         return jsonify({"error": "No file selected."}), 400
-    if not job_url:
-        return jsonify({"error": "Job description URL is required."}), 400
+    if not job_url and not manual_jd:
+        return jsonify({"error": "Either Job description URL or manual job description is required."}), 400
 
-    # Validate URL format (basic check)
-    if not (job_url.startswith('http://') or job_url.startswith('https://')):
+    # Validate URL format (basic check) if no manual JD provided
+    if not manual_jd and not (job_url.startswith('http://') or job_url.startswith('https://')):
          return jsonify({"error": "Invalid URL format. Please include http:// or https://"}), 400
 
     if file and allowed_file(file.filename):
@@ -684,16 +703,14 @@ def process_resume():
                  print("Warning: Initial LaTeX seems minimal. Conversion might have issues.")
                  # Proceed but maybe add a warning to the user later?
 
-            # 3. Scrape Job Description
-            print("\n--- Scraping Job Description ---")
-            job_description = scrape_job_description(job_url)
+            # 3. Get Job Description
+            print("\n--- Getting Job Description ---")
+            job_description = manual_jd if manual_jd else scrape_job_description(job_url)
             user_message = "" # Message to send back to the user
-            if "ERROR" in job_description:
+            if "ERROR" in job_description and not manual_jd:
                  print(f"Warning: Job description scraping failed: {job_description}")
-                 user_message = f"Warning: Could not scrape job description ({job_description}). Displaying untailored LaTeX."
-                 # Return initial LaTeX if scraping fails, but let user know
-                 return jsonify({"latex": initial_latex, "message": user_message})
-            elif len(job_description) < 150:
+                 return jsonify({"error": "Could not scrape job description. Please enter it manually."}), 400
+            elif len(job_description) < 150 and not manual_jd:
                  user_message = "Warning: Scraped job description seems very short. Tailoring quality may be affected. "
 
 
