@@ -101,7 +101,7 @@ def parse_resume(file_path):
             "SUMMARY", "PROFILE", "OBJECTIVE",
             "EXPERIENCE", "EMPLOYMENT HISTORY", "WORK HISTORY",
             "EDUCATION",
-            "SKILLS", "TECHNICAL SKILLS", "COMPETENCIES",
+            "KEY SKILLS", "SKILLS", "TECHNICAL SKILLS", "COMPETENCIES",
             "PROJECTS",
             "CERTIFICATIONS", "LICENSES",
             "AWARDS", "HONORS",
@@ -141,6 +141,8 @@ def parse_resume(file_path):
                      normalized_section_name = "EXPERIENCE"
                  elif "EDUCATION" in normalized_section_name:
                      normalized_section_name = "EDUCATION"
+                 elif normalized_section_name == "KEY SKILLS":
+                     normalized_section_name = "KEY SKILLS"  # Preserve KEY SKILLS as distinct
                  elif "SKILLS" in normalized_section_name or "TECHNICAL" in normalized_section_name or "COMPETENCIES" in normalized_section_name:
                      normalized_section_name = "SKILLS"
                  elif "SUMMARY" in normalized_section_name or "OBJECTIVE" in normalized_section_name or "PROFILE" in normalized_section_name:
@@ -164,6 +166,8 @@ def parse_resume(file_path):
                  normalized_section_name = "EXPERIENCE"
              elif "EDUCATION" in normalized_section_name:
                  normalized_section_name = "EDUCATION"
+             elif normalized_section_name == "KEY SKILLS":
+                 normalized_section_name = "KEY SKILLS"  # Preserve KEY SKILLS as distinct
              elif "SKILLS" in normalized_section_name or "TECHNICAL" in normalized_section_name or "COMPETENCIES" in normalized_section_name:
                  normalized_section_name = "SKILLS"
              elif "SUMMARY" in normalized_section_name or "OBJECTIVE" in normalized_section_name or "PROFILE" in normalized_section_name:
@@ -321,7 +325,7 @@ def convert_to_latex(parsed_data):
                             # Remove any bullet points from the title
                             title = lines[0].strip().replace('•', '').replace('*', '').replace('-', '').strip()
                             date = lines[1].strip()
-                            # Add experience heading
+                            # Add experience heading with role name
                             latex_string += f"\\textbf{{{escape_latex_text(title)}}} \\hfill {escape_latex_text(date)}\n"
                             # Add remaining content as bullet points
                             if len(lines) > 2:
@@ -333,6 +337,15 @@ def convert_to_latex(parsed_data):
                         else:
                             # If format is unexpected, add as is
                             latex_string += f"{escaped_content}\n"
+            elif section_name == "KEY SKILLS":
+                # Special handling for KEY SKILLS - ensure each item is bulleted
+                lines = [line.strip() for line in section_content.split('\n') if line.strip()]
+                latex_string += r'\begin{itemize}' + '\n'
+                for line in lines:
+                    # Remove any existing bullets and add LaTeX bullet
+                    line = line.replace('•', '').replace('*', '').replace('-', '').strip()
+                    latex_string += r'  \item ' + escape_latex_text(line) + '\n'
+                latex_string += r'\end{itemize}' + '\n'
             else:
                 # For other sections, use standard formatting
                 lines = [line.strip() for line in section_content.split('\n') if line.strip()]
@@ -473,6 +486,8 @@ You are an expert resume writer and career coach. Your task is to rewrite the fo
 6. **Conciseness:** Keep the language clear, concise, and professional. Aim for 1-2 pages total resume length.
 7. **No Suggestions:** Do not include any suggestions or placeholders. Only include actual content.
 8. **No Headers:** Do not include any section headers or titles in your output. Only provide the content that should go under the section.
+9. **Special Instructions for KEY SKILLS:** Keep the original formatting and content. Only add new skills from the job description that are not already present. Do not modify existing skills.
+10. **Special Instructions for EXPERIENCE:** Preserve the role names and dates exactly as they appear in the original. Only modify the bullet points to better match the job description.
 
 **Job Description:**
 ---
@@ -519,6 +534,12 @@ You are an expert resume writer and career coach. Your task is to rewrite the fo
             # Remove any section headers that might have been included
             tailored_content = re.sub(r'^\\section.*?$', '', tailored_content, flags=re.MULTILINE)
             tailored_content = re.sub(r'^\\section\*.*?$', '', tailored_content, flags=re.MULTILINE)
+
+            # Ensure proper list formatting
+            if r'\item' in tailored_content:
+                # If content contains \item but no list environment, wrap it in itemize
+                if not (r'\begin{itemize}' in tailored_content and r'\end{itemize}' in tailored_content):
+                    tailored_content = r'\begin{itemize}' + '\n' + tailored_content + '\n' + r'\end{itemize}'
 
             print(f"Gemini tailoring successful for section '{section_name}'.")
             return tailored_content
@@ -716,7 +737,7 @@ def process_resume():
                  print("Skipping tailoring loop: Gemini model not available.")
             else:
                 # Define which sections to attempt tailoring (adjust as needed)
-                sections_to_tailor = ["SUMMARY", "EXPERIENCE", "SKILLS", "PROJECTS"]
+                sections_to_tailor = ["SUMMARY", "KEY SKILLS", "EXPERIENCE", "SKILLS", "PROJECTS"]
                 tailoring_errors = []
 
                 for section_name in sections_to_tailor:
