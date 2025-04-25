@@ -298,7 +298,7 @@ def convert_to_latex(parsed_data):
 
     # --- Add other sections ---
     # Define order (optional, but improves consistency)
-    section_order = ["SUMMARY", "SKILLS", "EXPERIENCE", "PROJECTS", "EDUCATION", "CERTIFICATIONS", "AWARDS", "PUBLICATIONS"]
+    section_order = ["SUMMARY", "KEY SKILLS", "EXPERIENCE", "PROJECTS", "EDUCATION", "CERTIFICATIONS", "AWARDS", "PUBLICATIONS"]
     processed_sections = set()
 
     for section_name in section_order:
@@ -309,17 +309,42 @@ def convert_to_latex(parsed_data):
 
             latex_string += f"\n\\section{{{escaped_name}}}\n"
 
-            # Attempt to wrap list-like content in itemize
-            lines = [line.strip() for line in section_content.split('\n') if line.strip()]
-            is_likely_list = len(lines) > 1 and len(section_content) / len(lines) < 150
-
-            if is_likely_list:
-                latex_string += r'\begin{itemize}' + '\n'
-                for line in lines:
-                    latex_string += r'  \item ' + escape_latex_text(line) + '\n'
-                latex_string += r'\end{itemize}' + '\n'
+            # Special handling for Experience section
+            if section_name == "EXPERIENCE":
+                # Split content into individual experiences
+                experiences = section_content.split('\n\n')
+                for exp in experiences:
+                    if exp.strip():
+                        # Try to extract title and date
+                        lines = exp.strip().split('\n')
+                        if len(lines) >= 2:
+                            # Remove any bullet points from the title
+                            title = lines[0].strip().replace('•', '').replace('*', '').replace('-', '').strip()
+                            date = lines[1].strip()
+                            # Add experience heading
+                            latex_string += f"\\textbf{{{escape_latex_text(title)}}} \\hfill {escape_latex_text(date)}\n"
+                            # Add remaining content as bullet points
+                            if len(lines) > 2:
+                                latex_string += r'\begin{itemize}' + '\n'
+                                for line in lines[2:]:
+                                    if line.strip():
+                                        latex_string += r'  \item ' + escape_latex_text(line.strip()) + '\n'
+                                latex_string += r'\end{itemize}' + '\n'
+                        else:
+                            # If format is unexpected, add as is
+                            latex_string += f"{escaped_content}\n"
             else:
-                latex_string += f"{escaped_content}\n"
+                # For other sections, use standard formatting
+                lines = [line.strip() for line in section_content.split('\n') if line.strip()]
+                is_likely_list = len(lines) > 1 and len(section_content) / len(lines) < 150
+
+                if is_likely_list:
+                    latex_string += r'\begin{itemize}' + '\n'
+                    for line in lines:
+                        latex_string += r'  \item ' + escape_latex_text(line) + '\n'
+                    latex_string += r'\end{itemize}' + '\n'
+                else:
+                    latex_string += f"{escaped_content}\n"
 
             processed_sections.add(section_name)
 
