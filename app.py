@@ -489,7 +489,7 @@ def tailor_section_with_gemini(section_name, section_content, job_description):
     if section_name in ["KEY SKILLS", "SUMMARY"]:
         # Convert the content to a proper LaTeX list if it contains bullet points
         lines = [line.strip() for line in section_content.split('\n') if line.strip()]
-        if any(line.startswith(('•', '*', '-')) for line in lines):
+        if section_name == "KEY SKILLS" or any(line.startswith(('•', '*', '-')) for line in lines):
             formatted_content = r'\begin{itemize}' + '\n'
             for line in lines:
                 # Remove any existing bullets and add LaTeX bullet
@@ -518,8 +518,8 @@ You are an expert resume writer and career coach. Your task is to rewrite the fo
     - Preserve the exact job title and company name from the original
     - Keep the dates exactly as they appear in the original
     - Format each experience as:
-      \\textbf{{Job Title}} \\hfill Date
-      Company Name
+      \\textbf{{Job Title}} \\hfill \\textit{{Date}}
+      \\textbf{{Company Name}}
       \\begin{{itemize}}
       \\item First bullet point
       \\item Second bullet point
