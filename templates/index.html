@@ -133,8 +133,8 @@
                 <input type="file" id="resume" name="resume" accept=".pdf,.docx" required>
             </div>
             <div class="form-group">
-                <label for="job_url">Job Description URL:</label>
-                <input type="url" id="job_url" name="job_url" placeholder="https://example.com/job/123" required>
+                <label for="job_description">Job Description:</label>
+                <textarea id="job_description" name="job_description" rows="10" placeholder="Paste the job description here..." required></textarea>
             </div>
             <button type="submit">Tailor Resume</button>
         </form>
@@ -159,24 +159,6 @@
         <p><small>Note: This tool uses AI and web scraping, results may vary. Review carefully.</small></p>
     </div>
 
-    <!-- Job Description Dialog -->
-    <div id="jd-dialog" class="dialog-overlay">
-        <div class="dialog">
-            <div class="dialog-header">
-                <h3 class="dialog-title">Enter Job Description</h3>
-                <button class="dialog-close">&times;</button>
-            </div>
-            <div class="dialog-content">
-                <p>The job description could not be automatically retrieved. Please paste the job description below:</p>
-                <textarea id="manual-jd" placeholder="Paste the job description here..."></textarea>
-            </div>
-            <div class="dialog-footer">
-                <button id="cancel-jd">Cancel</button>
-                <button id="submit-jd" class="download-btn">Submit</button>
-            </div>
-        </div>
-    </div>
-
     <!-- Add CodeMirror JS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/stex/stex.min.js"></script> <!-- LaTeX mode -->
@@ -186,11 +168,6 @@
         const latexCode = document.getElementById('latex-code');
         const previewFrame = document.getElementById('preview-frame');
         const downloadBtn = document.getElementById('download-pdf');
-        const jdDialog = document.getElementById('jd-dialog');
-        const manualJd = document.getElementById('manual-jd');
-        const submitJd = document.getElementById('submit-jd');
-        const cancelJd = document.getElementById('cancel-jd');
-        const closeJd = document.querySelector('.dialog-close');
 
         // Initialize CodeMirror
         const editor = CodeMirror.fromTextArea(latexCode, {
@@ -270,45 +247,29 @@
             };
         }
 
-        // Function to show the job description dialog
-        function showJdDialog() {
-            jdDialog.style.display = 'block';
-            manualJd.focus();
-        }
-
-        // Function to hide the job description dialog
-        function hideJdDialog() {
-            jdDialog.style.display = 'none';
-            manualJd.value = '';
-        }
-
-        // Event listeners for dialog
-        closeJd.addEventListener('click', hideJdDialog);
-        cancelJd.addEventListener('click', hideJdDialog);
-        submitJd.addEventListener('click', () => {
-            const jd = manualJd.value.trim();
-            if (jd) {
-                hideJdDialog();
-                processResumeWithJd(jd);
-            }
-        });
-
-        // Function to process resume with manual job description
-        function processResumeWithJd(jobDescription) {
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
             const formData = new FormData(form);
-            formData.append('job_description', jobDescription);
             
-            statusDiv.textContent = 'Processing... Please wait.';
-            statusDiv.className = '';
-            editor.setValue('');
-            downloadBtn.style.display = 'none';
+            try {
+                statusDiv.textContent = 'Processing... Please wait.';
+                statusDiv.className = '';
+                editor.setValue('');
+                downloadBtn.style.display = 'none';
 
-            fetch('/process', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(result => {
+                const response = await fetch('/process', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('Server error:', errorText);
+                    throw new Error(`Server error: ${response.status} ${response.statusText}`);
+                }
+
+                const result = await response.json();
+
                 if (result.error) {
                     statusDiv.textContent = `Error: ${result.error}`;
                     statusDiv.className = 'error';
@@ -317,40 +278,9 @@
                     statusDiv.textContent = result.message || 'Tailoring complete. Review the LaTeX below.';
                     updatePreview();
                 }
-            })
-            .catch(error => {
-                console.error('Fetch Error:', error);
-                statusDiv.textContent = `Error: Could not connect to the server or process the request. ${error}`;
-                statusDiv.className = 'error';
-            });
-        }
-
-        form.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            const formData = new FormData(form);
-            
-            try {
-                const response = await fetch('/process', {
-                    method: 'POST',
-                    body: formData,
-                });
-
-                const result = await response.json();
-
-                if (response.ok) {
-                    editor.setValue(result.latex || '');
-                    statusDiv.textContent = result.message || 'Tailoring complete. Review the LaTeX below.';
-                    updatePreview();
-                } else if (result.error && result.error.includes('Could not scrape job description')) {
-                    // Show dialog for manual job description entry
-                    showJdDialog();
-                } else {
-                    statusDiv.textContent = `Error: ${result.error || 'Unknown error'}`;
-                    statusDiv.className = 'error';
-                }
             } catch (error) {
                 console.error('Fetch Error:', error);
-                statusDiv.textContent = `Error: Could not connect to the server or process the request. ${error}`;
+                statusDiv.textContent = `Error: Could not connect to the server or process the request. ${error.message}`;
                 statusDiv.className = 'error';
             }
         });

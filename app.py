@@ -488,6 +488,7 @@ You are an expert resume writer and career coach. Your task is to rewrite the fo
 8. **No Headers:** Do not include any section headers or titles in your output. Only provide the content that should go under the section.
 9. **Special Instructions for KEY SKILLS:** Keep the original formatting and content. Only add new skills from the job description that are not already present. Do not modify existing skills.
 10. **Special Instructions for EXPERIENCE:** Preserve the role names and dates exactly as they appear in the original. Only modify the bullet points to better match the job description.
+11. **LaTeX Escaping:** Make sure to escape special LaTeX characters like &, %, $, #, _, {{, }}, ~, ^ with a backslash. For example, write 'R\\&D' instead of 'R&D'.
 
 **Job Description:**
 ---
@@ -540,6 +541,9 @@ You are an expert resume writer and career coach. Your task is to rewrite the fo
                 # If content contains \item but no list environment, wrap it in itemize
                 if not (r'\begin{itemize}' in tailored_content and r'\end{itemize}' in tailored_content):
                     tailored_content = r'\begin{itemize}' + '\n' + tailored_content + '\n' + r'\end{itemize}'
+
+            # Ensure proper LaTeX escaping
+            tailored_content = escape_latex_text(tailored_content)
 
             print(f"Gemini tailoring successful for section '{section_name}'.")
             return tailored_content
@@ -668,22 +672,17 @@ def index():
 
 @app.route('/process', methods=['POST'])
 def process_resume():
-    """Handles file upload, URL, parsing, tailoring, and returns tailored LaTeX."""
+    """Handles file upload, parsing, tailoring, and returns tailored LaTeX."""
     if 'resume' not in request.files:
         return jsonify({"error": "No resume file part in the request."}), 400
 
     file = request.files['resume']
-    job_url = request.form.get('job_url', '').strip()
     manual_jd = request.form.get('job_description', '').strip()
 
     if file.filename == '':
         return jsonify({"error": "No file selected."}), 400
-    if not job_url and not manual_jd:
-        return jsonify({"error": "Either Job description URL or manual job description is required."}), 400
-
-    # Validate URL format (basic check) if no manual JD provided
-    if not manual_jd and not (job_url.startswith('http://') or job_url.startswith('https://')):
-         return jsonify({"error": "Invalid URL format. Please include http:// or https://"}), 400
+    if not manual_jd:
+        return jsonify({"error": "Job description is required."}), 400
 
     if file and allowed_file(file.filename):
         # Secure the filename before saving
@@ -720,14 +719,10 @@ def process_resume():
 
             # 3. Get Job Description
             print("\n--- Getting Job Description ---")
-            job_description = manual_jd if manual_jd else scrape_job_description(job_url)
+            job_description = manual_jd
             user_message = "" # Message to send back to the user
-            if "ERROR" in job_description and not manual_jd:
-                 print(f"Warning: Job description scraping failed: {job_description}")
-                 return jsonify({"error": "Could not scrape job description. Please enter it manually."}), 400
-            elif len(job_description) < 150 and not manual_jd:
-                 user_message = "Warning: Scraped job description seems very short. Tailoring quality may be affected. "
-
+            if len(job_description) < 150:
+                user_message = "Warning: Job description seems very short. Tailoring quality may be affected. "
 
             # 4. Tailor each section using Gemini
             updated_latex = initial_latex
@@ -763,7 +758,6 @@ def process_resume():
                      user_message += "Tailoring complete for other sections."
                 else:
                      user_message = "Tailoring complete. Review the LaTeX below."
-
 
             print("--- Tailoring Loop Complete ---")
 
