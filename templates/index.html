@@ -58,6 +58,53 @@
             margin-bottom: 10px;
         }
 
+        /* Full screen loading overlay */
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 255, 0.9);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        .loading-content {
+            text-align: center;
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        .loading-bar {
+            width: 300px;
+            height: 4px;
+            background-color: #f0f0f0;
+            border-radius: 2px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        .loading-progress {
+            width: 0%;
+            height: 100%;
+            background-color: #007bff;
+            animation: loading 2s infinite linear;
+            border-radius: 2px;
+        }
+        @keyframes loading {
+            0% { width: 0%; }
+            50% { width: 100%; }
+            100% { width: 0%; }
+        }
+        .loading-text {
+            color: #333;
+            font-size: 16px;
+            margin-top: 10px;
+        }
+
         /* Dialog styles */
         .dialog-overlay {
             display: none;
@@ -159,6 +206,16 @@
         <p><small>Note: This tool uses AI and web scraping, results may vary. Review carefully.</small></p>
     </div>
 
+    <!-- Full screen loading overlay -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-content">
+            <div class="loading-bar">
+                <div class="loading-progress"></div>
+            </div>
+            <div class="loading-text">Processing your resume...</div>
+        </div>
+    </div>
+
     <!-- Add CodeMirror JS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/stex/stex.min.js"></script> <!-- LaTeX mode -->
@@ -168,6 +225,7 @@
         const latexCode = document.getElementById('latex-code');
         const previewFrame = document.getElementById('preview-frame');
         const downloadBtn = document.getElementById('download-pdf');
+        const loadingOverlay = document.getElementById('loading-overlay');
 
         // Initialize CodeMirror
         const editor = CodeMirror.fromTextArea(latexCode, {
@@ -182,6 +240,21 @@
             updatePreview();
         }, 1000)); // Debounce for 1 second
 
+        // Function to show loading state
+        function showLoading(message) {
+            console.log('Showing loading:', message);
+            loadingOverlay.style.display = 'flex';
+            loadingOverlay.querySelector('.loading-text').textContent = message;
+            statusDiv.textContent = '';
+            statusDiv.className = '';
+        }
+
+        // Function to hide loading state
+        function hideLoading() {
+            console.log('Hiding loading');
+            loadingOverlay.style.display = 'none';
+        }
+
         // Function to update preview
         function updatePreview() {
             const latex = editor.getValue();
@@ -190,6 +263,8 @@
                 console.log("No LaTeX content to preview");
                 return;
             }
+
+            showLoading('Generating PDF preview...');
 
             // Create a form to submit the LaTeX content
             const formData = new FormData();
@@ -231,6 +306,9 @@
                 statusDiv.textContent = 'Error generating preview.';
                 statusDiv.className = 'error';
                 downloadBtn.style.display = 'none';
+            })
+            .finally(() => {
+                hideLoading();
             });
         }
 
@@ -252,8 +330,7 @@
             const formData = new FormData(form);
             
             try {
-                statusDiv.textContent = 'Processing... Please wait.';
-                statusDiv.className = '';
+                showLoading('Processing your resume...');
                 editor.setValue('');
                 downloadBtn.style.display = 'none';
 
@@ -282,6 +359,8 @@
                 console.error('Fetch Error:', error);
                 statusDiv.textContent = `Error: Could not connect to the server or process the request. ${error.message}`;
                 statusDiv.className = 'error';
+            } finally {
+                hideLoading();
             }
         });
     </script>

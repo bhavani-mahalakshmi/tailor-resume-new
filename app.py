@@ -207,8 +207,8 @@ def escape_latex_text(text):
     # First, handle list formatting
     if '\\item' in text:
         # Ensure proper list environment
-        if not (r'\begin{itemize}' in text and r'\end{itemize}' in text):
-            text = r'\begin{itemize}' + '\n' + text + '\n' + r'\end{itemize}'
+        if not (r'\begin{customitemize}' in text and r'\end{customitemize}' in text):
+            text = r'\begin{customitemize}' + '\n' + text + '\n' + r'\end{customitemize}'
     
     # Then handle special characters
     # Order matters here! Escape backslash first.
@@ -223,8 +223,9 @@ def escape_latex_text(text):
     text = text.replace('~', r'\textasciitilde{}')
     text = text.replace('^', r'\textasciicircum{}')
     
-    # Handle common unicode bullets, converting them to \item
-    text = re.sub(r'^\s*([•●*–-])\s+', r'\\item ', text, flags=re.MULTILINE)
+    # Handle common unicode bullets and numbers at the start of lines
+    text = re.sub(r'^\s*([•●*–-])\s*(\d+\.)?\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*(\d+\.)\s*', '', text, flags=re.MULTILINE)
     
     # Fix any double-escaped backslashes
     text = text.replace(r'\\textbackslash{}', r'\textbackslash{}')
@@ -251,6 +252,9 @@ def convert_to_latex(parsed_data):
 \usepackage[margin=0.5in]{geometry}  % Reduced margins
 \usepackage{hyperref}
 
+% Remove page numbers
+\pagenumbering{gobble}
+
 % Basic formatting
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{0.2em}  % Reduced paragraph spacing
@@ -272,6 +276,11 @@ def convert_to_latex(parsed_data):
 \setlength{\topsep}{0.1em}  % Reduced top spacing for lists
 \setlength{\partopsep}{0.1em}  % Reduced spacing around lists
 \setlength{\parsep}{0.1em}  % Reduced spacing between paragraphs in lists
+
+% Custom list environment to ensure consistent bullet points
+\newenvironment{customitemize}
+  {\begin{itemize}[label=$\bullet$]}
+  {\end{itemize}}
 
 \begin{document}
 
@@ -296,9 +305,13 @@ def convert_to_latex(parsed_data):
                     elif re.search(r'(\d{3}[-\.\s]??){2}\d{4}', line): # Basic phone number regex
                         contact_items.append(f"Phone: {escape_latex_text(line)}")
                     elif 'linkedin.com' in line:
-                        contact_items.append(f"LinkedIn: \\href{{{line}}}{{{escape_latex_text(line)}}}")
+                        # Extract username from LinkedIn URL
+                        username = line.split('/')[-1]
+                        contact_items.append(f"LinkedIn: \\href{{{line}}}{{{escape_latex_text(username)}}}")
                     elif 'github.com' in line:
-                        contact_items.append(f"GitHub: \\href{{{line}}}{{{escape_latex_text(line)}}}")
+                        # Extract username from GitHub URL
+                        username = line.split('/')[-1]
+                        contact_items.append(f"GitHub: \\href{{{line}}}{{{escape_latex_text(username)}}}")
                     elif 'http' in line: # Generic website/portfolio
                         contact_items.append(f"Website: \\href{{{line}}}{{{escape_latex_text(line)}}}")
                     else:
@@ -344,33 +357,45 @@ def convert_to_latex(parsed_data):
                             latex_string += f"\\textbf{{{escape_latex_text(title)}}} \\hfill \\textit{{{escape_latex_text(date)}}}\n"
                             # Add remaining content as bullet points
                             if len(lines) > 2:
-                                latex_string += r'\begin{itemize}' + '\n'
+                                latex_string += r'\begin{customitemize}' + '\n'
                                 for line in lines[2:]:
                                     if line.strip():
                                         latex_string += r'  \item ' + escape_latex_text(line.strip()) + '\n'
-                                latex_string += r'\end{itemize}' + '\n'
+                                latex_string += r'\end{customitemize}' + '\n'
                         else:
                             # If format is unexpected, add as is
                             latex_string += f"{escaped_content}\n"
             elif section_name == "KEY SKILLS":
                 # Special handling for KEY SKILLS - ensure each item is bulleted
                 lines = [line.strip() for line in section_content.split('\n') if line.strip()]
-                latex_string += r'\begin{itemize}' + '\n'
+                latex_string += r'\begin{customitemize}' + '\n'
                 for line in lines:
                     # Remove any existing bullets and add LaTeX bullet
                     line = line.replace('•', '').replace('*', '').replace('-', '').strip()
                     latex_string += r'  \item ' + escape_latex_text(line) + '\n'
-                latex_string += r'\end{itemize}' + '\n'
+                latex_string += r'\end{customitemize}' + '\n'
+            elif section_name == "EDUCATION":
+                # Special handling for EDUCATION - format as paragraphs with dates
+                lines = [line.strip() for line in section_content.split('\n') if line.strip()]
+                for line in lines:
+                    # Split the line into degree and date if possible
+                    parts = line.split(' - ')
+                    if len(parts) == 2:
+                        degree = parts[0].strip()
+                        date = parts[1].strip()
+                        latex_string += f"\\textbf{{{escape_latex_text(degree)}}} \\hfill \\textit{{{escape_latex_text(date)}}}\n\n"
+                    else:
+                        latex_string += f"{escape_latex_text(line)}\n\n"
             else:
                 # For other sections, use standard formatting
                 lines = [line.strip() for line in section_content.split('\n') if line.strip()]
                 is_likely_list = len(lines) > 1 and len(section_content) / len(lines) < 150
 
                 if is_likely_list:
-                    latex_string += r'\begin{itemize}' + '\n'
+                    latex_string += r'\begin{customitemize}' + '\n'
                     for line in lines:
                         latex_string += r'  \item ' + escape_latex_text(line) + '\n'
-                    latex_string += r'\end{itemize}' + '\n'
+                    latex_string += r'\end{customitemize}' + '\n'
                 else:
                     latex_string += f"{escaped_content}\n"
 
