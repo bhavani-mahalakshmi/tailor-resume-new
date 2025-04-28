@@ -485,7 +485,23 @@ def tailor_section_with_gemini(section_name, section_content, job_description):
 
     print(f"Tailoring section '{section_name}' with Gemini...")
 
-    # Construct a more detailed prompt
+    # For KEY SKILLS and SUMMARY sections, return the original content with proper LaTeX formatting
+    if section_name in ["KEY SKILLS", "SUMMARY"]:
+        # Convert the content to a proper LaTeX list if it contains bullet points
+        lines = [line.strip() for line in section_content.split('\n') if line.strip()]
+        if any(line.startswith(('•', '*', '-')) for line in lines):
+            formatted_content = r'\begin{itemize}' + '\n'
+            for line in lines:
+                # Remove any existing bullets and add LaTeX bullet
+                line = line.replace('•', '').replace('*', '').replace('-', '').strip()
+                formatted_content += r'  \item ' + escape_latex_text(line) + '\n'
+            formatted_content += r'\end{itemize}'
+        else:
+            # If no bullet points, keep as paragraph
+            formatted_content = escape_latex_text(section_content)
+        return formatted_content
+
+    # Construct a more detailed prompt for other sections
     prompt = f"""
 You are an expert resume writer and career coach. Your task is to rewrite the following resume section to be more impactful and specifically tailored to the provided job description.
 
@@ -498,10 +514,18 @@ You are an expert resume writer and career coach. Your task is to rewrite the fo
 6. **Conciseness:** Keep the language clear, concise, and professional. Aim for 1-2 pages total resume length.
 7. **No Suggestions:** Do not include any suggestions or placeholders. Only include actual content.
 8. **No Headers:** Do not include any section headers or titles in your output. Only provide the content that should go under the section.
-9. **Special Instructions for KEY SKILLS:** Keep the original formatting and content. Only add new skills from the job description that are not already present. Do not modify existing skills.
-10. **Special Instructions for EXPERIENCE:** Preserve the role names and dates exactly as they appear in the original. Only modify the bullet points to better match the job description.
-11. **LaTeX Escaping:** Make sure to escape special LaTeX characters like &, %, $, #, _, {{, }}, ~, ^ with a backslash. For example, write 'R\\&D' instead of 'R&D'.
-12. **List Formatting:** For lists, use this exact format:
+9. **Special Instructions for EXPERIENCE:** 
+    - Preserve the exact job title and company name from the original
+    - Keep the dates exactly as they appear in the original
+    - Format each experience as:
+      \\textbf{{Job Title}} \\hfill Date
+      Company Name
+      \\begin{{itemize}}
+      \\item First bullet point
+      \\item Second bullet point
+      \\end{{itemize}}
+10. **LaTeX Escaping:** Make sure to escape special LaTeX characters like &, %, $, #, _, {{, }}, ~, ^ with a backslash. For example, write 'R\\&D' instead of 'R&D'.
+11. **List Formatting:** For lists, use this exact format:
     \\begin{{itemize}}
     \\item First item
     \\item Second item
