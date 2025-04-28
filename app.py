@@ -248,27 +248,30 @@ def convert_to_latex(parsed_data):
     # --- Minimal LaTeX Resume Template ---
     latex_string = r"""
 \documentclass[11pt]{article}
-\usepackage[margin=0.75in]{geometry}
+\usepackage[margin=0.5in]{geometry}  % Reduced margins
 \usepackage{hyperref}
 
 % Basic formatting
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{0.3em}
+\setlength{\parskip}{0.2em}  % Reduced paragraph spacing
 \raggedright
 
 % Section formatting
 \renewcommand{\section}[1]{
-  \vspace{0.3em}
+  \vspace{0.2em}  % Reduced section spacing
   {\large\bfseries #1}
-  \vspace{0.2em}
+  \vspace{0.1em}  % Reduced spacing
   \hrule
-  \vspace{0.3em}
+  \vspace{0.2em}  % Reduced spacing
 }
 
 % List formatting
 \renewcommand{\labelitemi}{$\bullet$}
-\setlength{\itemsep}{0.1em}
-\setlength{\parskip}{0.1em}
+\setlength{\itemsep}{0.1em}  % Reduced item spacing
+\setlength{\parskip}{0.1em}  % Reduced paragraph spacing
+\setlength{\topsep}{0.1em}  % Reduced top spacing for lists
+\setlength{\partopsep}{0.1em}  % Reduced spacing around lists
+\setlength{\parsep}{0.1em}  % Reduced spacing between paragraphs in lists
 
 \begin{document}
 
@@ -306,10 +309,10 @@ def convert_to_latex(parsed_data):
     latex_string += f"""
 \\begin{{center}}
     {{\\Large {escape_latex_text(name)}}} % Use extracted name
-    \\vspace{{0.3em}} \\\\
+    \\vspace{{0.2em}} \\\\  % Reduced spacing
     {contact_info} % Add formatted contact info
 \\end{{center}}
-\\vspace{{0.5em}}
+\\vspace{{0.3em}}  % Reduced spacing
 """
 
     # --- Add other sections ---
@@ -338,7 +341,7 @@ def convert_to_latex(parsed_data):
                             title = lines[0].strip().replace('•', '').replace('*', '').replace('-', '').strip()
                             date = lines[1].strip()
                             # Add experience heading with role name
-                            latex_string += f"\\textbf{{{escape_latex_text(title)}}} \\hfill {escape_latex_text(date)}\n"
+                            latex_string += f"\\textbf{{{escape_latex_text(title)}}} \\hfill \\textit{{{escape_latex_text(date)}}}\n"
                             # Add remaining content as bullet points
                             if len(lines) > 2:
                                 latex_string += r'\begin{itemize}' + '\n'
