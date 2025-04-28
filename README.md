@@ -82,24 +82,15 @@ resume-tailor/
 └── static/           # Static files (CSS, JS, etc.)
 ```
 
-### Adding New Features
-
-1. Fork the repository
-2. Create a new branch for your feature
-3. Make your changes
-4. Submit a pull request
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
 ## Acknowledgments
 
 - Built with Flask
 - Uses CodeMirror for LaTeX editing
 - Font Awesome for icons
-- Material Design Darker theme for CodeMirror 
+- Material Design Darker theme for CodeMirror
+
+## Copyright
+
+© 2025 Bhavani Mahalakshmi Gowri Sankar. All rights reserved.
+
+Connect with me on [LinkedIn](https://www.linkedin.com/in/bhavani-mahalakshmi-gowri-sankar-6b6a54119/) 
