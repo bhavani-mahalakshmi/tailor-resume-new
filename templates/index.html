@@ -7,6 +7,8 @@
     <!-- Add CodeMirror CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/theme/material-darker.min.css">
+    <!-- Add Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         :root {
             --primary-color: #2563eb;
@@ -51,24 +53,78 @@
             margin-bottom: 0.5rem;
             font-weight: 500;
             color: var(--text-color);
+            line-height: 1.5;
         }
 
-        input[type="file"], 
-        textarea { 
+        label .info-container {
+            display: inline-flex;
+            align-items: center;
+        }
+
+        textarea {
             width: 100%;
             padding: 0.75rem;
             border: 1px solid var(--border-color);
             border-radius: 0.5rem;
-            background-color: white;
             font-size: 1rem;
+            min-height: 150px;
+            resize: vertical;
+            font-family: inherit;
+            line-height: 1.5;
             transition: border-color 0.2s, box-shadow 0.2s;
+            background-color: white;
         }
 
-        input[type="file"]:focus,
-        textarea:focus {
-            outline: none;
+        .file-upload-container {
+            position: relative;
+            margin-bottom: 1rem;
+        }
+
+        .file-upload-label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem;
+            border: 2px dashed var(--border-color);
+            border-radius: 0.5rem;
+            background-color: white;
+            cursor: pointer;
+            transition: border-color 0.2s, background-color 0.2s;
+        }
+
+        .file-upload-label:hover {
             border-color: var(--primary-color);
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+            background-color: #f8fafc;
+        }
+
+        .file-upload-label i {
+            color: var(--primary-color);
+            font-size: 1.25rem;
+        }
+
+        .file-upload-label span {
+            color: var(--text-color);
+            font-size: 1rem;
+        }
+
+        input[type="file"] {
+            position: absolute;
+            width: 0.1px;
+            height: 0.1px;
+            opacity: 0;
+            overflow: hidden;
+            z-index: -1;
+        }
+
+        .file-name {
+            margin-top: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-color);
+            display: none;
+        }
+
+        .file-name.show {
+            display: block;
         }
 
         button { 
@@ -222,6 +278,118 @@
             font-size: 0.875rem;
             text-align: center;
         }
+
+        /* Info icon and tooltip styles */
+        .info-container {
+            position: relative;
+            display: inline-block;
+            margin-left: 0.5rem;
+            vertical-align: middle;
+        }
+
+        .info-icon {
+            color: var(--primary-color);
+            cursor: help;
+            font-size: 1.2rem;
+            transition: color 0.2s;
+            vertical-align: middle;
+        }
+
+        .info-icon:hover {
+            color: var(--primary-hover);
+        }
+
+        .info-tooltip {
+            visibility: hidden;
+            position: absolute;
+            z-index: 1000;
+            width: 300px;
+            background-color: white;
+            color: var(--text-color);
+            text-align: left;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px var(--shadow-color);
+            left: 50%;
+            transform: translateX(-50%);
+            top: 100%;
+            margin-top: 0.5rem;
+            opacity: 0;
+            transition: opacity 0.2s;
+            font-size: 0.875rem;
+            line-height: 1.5;
+        }
+
+        .info-tooltip::before {
+            content: "";
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border-width: 0.5rem;
+            border-style: solid;
+            border-color: transparent transparent white transparent;
+        }
+
+        .info-container:hover .info-tooltip {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        .info-tooltip h3 {
+            margin: 0 0 0.5rem 0;
+            font-size: 1rem;
+            color: var(--primary-color);
+        }
+
+        .info-tooltip ul {
+            margin: 0;
+            padding-left: 1.5rem;
+        }
+
+        .info-tooltip li {
+            margin-bottom: 0.25rem;
+        }
+
+        .info-tooltip p {
+            margin: 0.5rem 0;
+        }
+
+        .form-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .form-group label {
+            flex: 1;
+        }
+
+        .label-container {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .label-container label {
+            margin: 0;
+        }
+
+        .info-container {
+            position: relative;
+        }
+
+        .info-icon {
+            color: var(--primary-color);
+            cursor: help;
+            font-size: 1.2rem;
+            transition: color 0.2s;
+        }
+
+        .info-icon:hover {
+            color: var(--primary-hover);
+        }
     </style>
 </head>
 <body>
@@ -229,12 +397,58 @@
         <h1>AI Resume Tailor</h1>
         <form id="resume-form">
             <div class="form-group">
-                <label for="resume">Upload Resume (.pdf or .docx):</label>
-                <input type="file" id="resume" name="resume" accept=".pdf,.docx" required>
+                <div class="label-container">
+                    <label for="resume">Upload Resume (.pdf or .docx)</label>
+                    <div class="info-container">
+                        <i class="fas fa-info-circle info-icon"></i>
+                        <div class="info-tooltip">
+                            <h3>Resume Sections</h3>
+                            <ul>
+                                <li><strong>Header:</strong> Name and contact information</li>
+                                <li><strong>Summary:</strong> Professional overview</li>
+                                <li><strong>Experience:</strong> Work history with dates</li>
+                                <li><strong>Education:</strong> Degrees and dates</li>
+                                <li><strong>Skills:</strong> Technical and soft skills</li>
+                                <li><strong>Projects:</strong> Notable projects</li>
+                            </ul>
+                            <h3>Supported Formats</h3>
+                            <ul>
+                                <li>PDF files</li>
+                                <li>Word documents (.docx)</li>
+                            </ul>
+                            <h3>Tips</h3>
+                            <p>For best results, ensure your resume has clear section headers and is well-formatted.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="file-upload-container">
+                    <label for="resume" class="file-upload-label">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                        <span>Choose a file or drag it here</span>
+                    </label>
+                    <input type="file" id="resume" name="resume" accept=".pdf,.docx" required>
+                    <div id="file-name" class="file-name"></div>
+                </div>
             </div>
             <div class="form-group">
-                <label for="job_description">Job Description:</label>
-                <textarea id="job_description" name="job_description" rows="10" placeholder="Paste the job description here..." required></textarea>
+                <div class="label-container">
+                    <label for="job_description">Job Description</label>
+                    <div class="info-container">
+                        <i class="fas fa-info-circle info-icon"></i>
+                        <div class="info-tooltip">
+                            <h3>Job Description Tips</h3>
+                            <p>Paste the complete job description here. Include:</p>
+                            <ul>
+                                <li>Job title and company</li>
+                                <li>Required qualifications</li>
+                                <li>Key responsibilities</li>
+                                <li>Desired skills and experience</li>
+                            </ul>
+                            <p>The more detailed the description, the better we can tailor your resume.</p>
+                        </div>
+                    </div>
+                </div>
+                <textarea id="job_description" name="job_description" placeholder="Paste the job description here..." required></textarea>
             </div>
             <button type="submit">Tailor Resume</button>
         </form>
@@ -256,7 +470,7 @@
             </div>
         </div>
         
-        <p class="note">Note: This tool uses AI and web scraping, results may vary. Review carefully.</p>
+        <p class="note">Note: This tool uses AI, results may vary. Review carefully.</p>
     </div>
 
     <!-- Full screen loading overlay -->
@@ -416,6 +630,59 @@
                 hideLoading();
             }
         });
+
+        // Add file name display functionality
+        const fileInput = document.getElementById('resume');
+        const fileNameDisplay = document.getElementById('file-name');
+
+        fileInput.addEventListener('change', function(e) {
+            const fileName = e.target.files[0]?.name;
+            if (fileName) {
+                fileNameDisplay.textContent = `Selected file: ${fileName}`;
+                fileNameDisplay.classList.add('show');
+            } else {
+                fileNameDisplay.textContent = '';
+                fileNameDisplay.classList.remove('show');
+            }
+        });
+
+        // Add drag and drop functionality
+        const dropZone = document.querySelector('.file-upload-label');
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, highlight, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, unhighlight, false);
+        });
+
+        function highlight(e) {
+            dropZone.classList.add('highlight');
+        }
+
+        function unhighlight(e) {
+            dropZone.classList.remove('highlight');
+        }
+
+        dropZone.addEventListener('drop', handleDrop, false);
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            fileInput.files = files;
+            const event = new Event('change');
+            fileInput.dispatchEvent(event);
+        }
     </script>
 </body>
 </html>
