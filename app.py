@@ -203,6 +203,14 @@ def escape_latex_text(text):
     """Basic LaTeX escaping for text content."""
     if not isinstance(text, str):
         text = str(text)
+    
+    # First, handle list formatting
+    if '\\item' in text:
+        # Ensure proper list environment
+        if not (r'\begin{itemize}' in text and r'\end{itemize}' in text):
+            text = r'\begin{itemize}' + '\n' + text + '\n' + r'\end{itemize}'
+    
+    # Then handle special characters
     # Order matters here! Escape backslash first.
     text = text.replace('\\', r'\textbackslash{}')
     text = text.replace('&', r'\&')
@@ -214,16 +222,20 @@ def escape_latex_text(text):
     text = text.replace('}', r'\}')
     text = text.replace('~', r'\textasciitilde{}')
     text = text.replace('^', r'\textasciicircum{}')
+    
     # Handle common unicode bullets, converting them to \item
     text = re.sub(r'^\s*([•●*–-])\s+', r'\\item ', text, flags=re.MULTILINE)
-    # Simple check for existing latex commands to avoid double escaping
-    # This is basic and might not cover all cases
-    if r'\item' not in text and r'\section' not in text and r'\documentclass' not in text:
-         # Convert newlines to LaTeX paragraph breaks (double backslash)
-         # Be careful not to add \\ after list items or section headers
-         # This simple replacement might add \\ where not needed, refinement needed.
-         # text = text.replace('\n', '\\\\ \n') # Often problematic, handle structure instead
-         pass # Let LaTeX handle line breaks within paragraphs naturally for now
+    
+    # Fix any double-escaped backslashes
+    text = text.replace(r'\\textbackslash{}', r'\textbackslash{}')
+    text = text.replace(r'\\&', r'\&')
+    text = text.replace(r'\\%', r'\%')
+    text = text.replace(r'\\$', r'\$')
+    text = text.replace(r'\\#', r'\#')
+    text = text.replace(r'\\_', r'\_')
+    text = text.replace(r'\\{', r'\{')
+    text = text.replace(r'\\}', r'\}')
+    
     return text
 
 def convert_to_latex(parsed_data):
@@ -489,6 +501,11 @@ You are an expert resume writer and career coach. Your task is to rewrite the fo
 9. **Special Instructions for KEY SKILLS:** Keep the original formatting and content. Only add new skills from the job description that are not already present. Do not modify existing skills.
 10. **Special Instructions for EXPERIENCE:** Preserve the role names and dates exactly as they appear in the original. Only modify the bullet points to better match the job description.
 11. **LaTeX Escaping:** Make sure to escape special LaTeX characters like &, %, $, #, _, {{, }}, ~, ^ with a backslash. For example, write 'R\\&D' instead of 'R&D'.
+12. **List Formatting:** For lists, use this exact format:
+    \\begin{{itemize}}
+    \\item First item
+    \\item Second item
+    \\end{{itemize}}
 
 **Job Description:**
 ---
@@ -537,13 +554,20 @@ You are an expert resume writer and career coach. Your task is to rewrite the fo
             tailored_content = re.sub(r'^\\section\*.*?$', '', tailored_content, flags=re.MULTILINE)
 
             # Ensure proper list formatting
-            if r'\item' in tailored_content:
+            if '\\item' in tailored_content:
                 # If content contains \item but no list environment, wrap it in itemize
                 if not (r'\begin{itemize}' in tailored_content and r'\end{itemize}' in tailored_content):
                     tailored_content = r'\begin{itemize}' + '\n' + tailored_content + '\n' + r'\end{itemize}'
 
-            # Ensure proper LaTeX escaping
-            tailored_content = escape_latex_text(tailored_content)
+            # Fix any double-escaped backslashes
+            tailored_content = tailored_content.replace(r'\\textbackslash{}', r'\textbackslash{}')
+            tailored_content = tailored_content.replace(r'\\&', r'\&')
+            tailored_content = tailored_content.replace(r'\\%', r'\%')
+            tailored_content = tailored_content.replace(r'\\$', r'\$')
+            tailored_content = tailored_content.replace(r'\\#', r'\#')
+            tailored_content = tailored_content.replace(r'\\_', r'\_')
+            tailored_content = tailored_content.replace(r'\\{', r'\{')
+            tailored_content = tailored_content.replace(r'\\}', r'\}')
 
             print(f"Gemini tailoring successful for section '{section_name}'.")
             return tailored_content
