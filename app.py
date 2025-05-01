@@ -796,9 +796,12 @@ def process_resume():
             # 3. Get Job Description
             print("\n--- Getting Job Description ---")
             job_description = manual_jd
+            print(f"Job Description Length: {len(job_description)} characters")
+            print(f"Job Description Preview: {job_description[:200]}...")
             user_message = "" # Message to send back to the user
             if len(job_description) < 150:
                 user_message = "Warning: Job description seems very short. Tailoring quality may be affected. "
+                print("Warning: Job description is very short")
 
             # 4. Tailor each section using Gemini
             updated_latex = initial_latex
@@ -810,14 +813,19 @@ def process_resume():
                 # Define which sections to attempt tailoring (adjust as needed)
                 sections_to_tailor = ["SUMMARY", "KEY SKILLS", "EXPERIENCE", "SKILLS", "PROJECTS"]
                 tailoring_errors = []
+                print(f"Found sections in resume: {list(parsed_data_for_tailoring.keys())}")
 
                 for section_name in sections_to_tailor:
                     if section_name in parsed_data_for_tailoring:
                         section_content = parsed_data_for_tailoring[section_name]
+                        print(f"\nProcessing section: {section_name}")
+                        print(f"Section content length: {len(section_content)} characters")
                         if isinstance(section_content, str) and len(section_content.strip()) > 30: # Check if content is substantial
+                            print(f"Tailoring section '{section_name}' with job description...")
                             tailored_content = tailor_section_with_gemini(section_name, section_content, job_description)
 
                             if "ERROR" not in tailored_content and tailored_content.strip():
+                                print(f"Successfully tailored section '{section_name}'")
                                 # 5. Update LaTeX string
                                 updated_latex = update_latex(updated_latex, section_name, tailored_content)
                             else:
