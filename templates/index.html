@@ -483,6 +483,18 @@
         </div>
     </div>
 
+    <!-- Tailoring Changes Dialog -->
+    <div id="changes-dialog" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.35); z-index:10000; justify-content:center; align-items:center;">
+        <div style="background:white; max-width:700px; width:90vw; border-radius:1rem; box-shadow:0 4px 24px rgba(0,0,0,0.18); padding:2rem; position:relative;">
+            <h2 style="margin-top:0;">Tailoring Results</h2>
+            <div id="changes-content" style="max-height:50vh; overflow:auto; font-size:0.98rem; margin-bottom:1.5rem;"></div>
+            <div style="display:flex; gap:1rem; justify-content:flex-end;">
+                <button id="copy-changes-btn" style="background:#2563eb; color:white;">Copy</button>
+                <button id="close-changes-btn" style="background:#64748b; color:white;">OK</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Add CodeMirror JS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/stex/stex.min.js"></script> <!-- LaTeX mode -->
@@ -614,6 +626,34 @@
 
                 const result = await response.json();
 
+                // --- Show dialog with changes or error ---
+                let dialog = document.getElementById('changes-dialog');
+                let content = document.getElementById('changes-content');
+                let copyBtn = document.getElementById('copy-changes-btn');
+                let closeBtn = document.getElementById('close-changes-btn');
+                let dialogText = '';
+                if (result.error) {
+                    dialogText = `<div style='color:#dc2626; font-weight:500;'>Error: ${result.error}</div>`;
+                } else if (result.changes && result.changes.length > 0) {
+                    dialogText = result.changes.map(change =>
+                        `<div style='margin-bottom:1.2em;'><b>Section:</b> ${change.section}<br><b>Before:</b><pre style='background:#f1f5f9; padding:0.5em; border-radius:0.3em; overflow:auto;'>${escapeHtml(change.before)}</pre><b>After:</b><pre style='background:#e0f2fe; padding:0.5em; border-radius:0.3em; overflow:auto;'>${escapeHtml(change.after)}</pre></div>`
+                    ).join('');
+                } else if (result.errors && result.errors.length > 0) {
+                    dialogText = result.errors.map(e => `<div style='color:#dc2626; margin-bottom:0.5em;'>${escapeHtml(e)}</div>`).join('');
+                } else {
+                    dialogText = '<div>No changes were made.</div>';
+                }
+                content.innerHTML = dialogText;
+                dialog.style.display = 'flex';
+
+                copyBtn.onclick = function() {
+                    let textToCopy = content.innerText;
+                    navigator.clipboard.writeText(textToCopy);
+                };
+                closeBtn.onclick = function() {
+                    dialog.style.display = 'none';
+                };
+
                 if (result.error) {
                     statusDiv.textContent = `Error: ${result.error}`;
                     statusDiv.className = 'error';
@@ -630,6 +670,14 @@
                 hideLoading();
             }
         });
+
+        // Utility to escape HTML for safe display
+        function escapeHtml(text) {
+            if (!text) return '';
+            return text.replace(/[&<>"']/g, function(m) {
+                return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m];
+            });
+        }
 
         // Add file name display functionality
         const fileInput = document.getElementById('resume');

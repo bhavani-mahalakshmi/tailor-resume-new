@@ -803,6 +803,8 @@ def process_resume():
                 user_message = "Warning: Job description seems very short. Tailoring quality may be affected. "
                 print("Warning: Job description is very short")
 
+            # --- Track changes for dialog ---
+            tailoring_changes = []
             # 4. Tailor each section using Gemini
             updated_latex = initial_latex
             print("\n--- Starting AI Tailoring Loop ---")
@@ -820,17 +822,38 @@ def process_resume():
                         section_content = parsed_data_for_tailoring[section_name]
                         print(f"\nProcessing section: {section_name}")
                         print(f"Section content length: {len(section_content)} characters")
-                        if isinstance(section_content, str) and len(section_content.strip()) > 30: # Check if content is substantial
+                        if isinstance(section_content, str) and len(section_content.strip()) > 30:
                             print(f"Tailoring section '{section_name}' with job description...")
                             tailored_content = tailor_section_with_gemini(section_name, section_content, job_description)
 
-                            if "ERROR" not in tailored_content and tailored_content.strip():
-                                print(f"Successfully tailored section '{section_name}'")
-                                # 5. Update LaTeX string
+                            # Always update LaTeX for SUMMARY, KEY SKILLS, and SKILLS, ensuring correct formatting
+                            if section_name in ["SUMMARY", "KEY SKILLS", "SKILLS"]:
+                                # If the tailored_content is already wrapped in itemize, do not double-wrap
+                                if (section_name in ["KEY SKILLS", "SKILLS"] and not tailored_content.strip().startswith(r'\begin{itemize}')):
+                                    # Convert to itemize if not already
+                                    lines = [line.strip() for line in tailored_content.split('\n') if line.strip()]
+                                    formatted_content = r'\begin{itemize}\n'
+                                    for line in lines:
+                                        line = line.replace('•', '').replace('*', '').replace('-', '').strip()
+                                        formatted_content += r'  \item ' + escape_latex_text(line) + '\n'
+                                    formatted_content += r'\end{itemize}'
+                                    tailored_content = formatted_content
+                                updated_latex = update_latex(updated_latex, section_name, tailored_content)
+                            elif ("ERROR" not in tailored_content and tailored_content.strip()):
+                                print(f"Updating LaTeX for section '{section_name}'")
                                 updated_latex = update_latex(updated_latex, section_name, tailored_content)
                             else:
                                 print(f"Skipping update for section '{section_name}' due to tailoring error or empty response: {tailored_content[:100]}...")
                                 tailoring_errors.append(f"Could not tailor '{section_name}': {tailored_content}")
+
+                            # Track changes for dialog
+                            if "ERROR" not in tailored_content and tailored_content.strip():
+                                if section_content.strip() != tailored_content.strip():
+                                    tailoring_changes.append({
+                                        "section": section_name,
+                                        "before": section_content.strip(),
+                                        "after": tailored_content.strip()
+                                    })
                         else:
                             print(f"Skipping section '{section_name}' - content too short or not suitable.")
                     else:
@@ -845,9 +868,9 @@ def process_resume():
 
             print("--- Tailoring Loop Complete ---")
 
-            # 6. Return final LaTeX
+            # 6. Return final LaTeX and changes
             print("Processing complete. Returning final LaTeX.")
-            return jsonify({"latex": updated_latex, "message": user_message.strip()})
+            return jsonify({"latex": updated_latex, "message": user_message.strip(), "changes": tailoring_changes, "errors": tailoring_errors})
 
         except Exception as e:
             print(f"An unexpected error occurred during processing: {e}")
