@@ -602,6 +602,21 @@ You are an expert resume writer and career coach. Your task is to rewrite the fo
             tailored_content = re.sub(r'\(e\.g\.,.*?\)', '', tailored_content)
             tailored_content = re.sub(r'\(add.*?\)', '', tailored_content)
 
+            # Remove text in brackets, parentheses that suggest edits/additions
+            tailored_content = re.sub(r'\[.*?\]', '', tailored_content) # Remove any [text]
+            tailored_content = re.sub(r'\(.*?\)', '', tailored_content) # Remove any (text)
+            tailored_content = re.sub(r'<.*?>', '', tailored_content)   # Remove any <text>
+            # Remove common placeholder patterns
+            tailored_content = re.sub(r'(?i)(insert|add|include|write|describe|specify|enter|input|your|paste|put)(\s+.*?)(here|below|above)', '', tailored_content)
+            # Remove "TODO" style comments
+            tailored_content = re.sub(r'(?i)(todo|note|fixme|xxx|placeholder).*?\n', '', tailored_content)
+            # Remove lines with common placeholder indicators
+            tailored_content = re.sub(r'.*\.\.\.$', '', tailored_content, flags=re.MULTILINE)
+            tailored_content = re.sub(r'.*_+.*', '', tailored_content, flags=re.MULTILINE)
+            # Clean up any resulting empty lines
+            tailored_content = re.sub(r'\n\s*\n+', '\n\n', tailored_content)
+            tailored_content = tailored_content.strip()
+
             # Remove any section headers that might have been included
             tailored_content = re.sub(r'^\\section.*?$', '', tailored_content, flags=re.MULTILINE)
             tailored_content = re.sub(r'^\\section\*.*?$', '', tailored_content, flags=re.MULTILINE)
@@ -621,6 +636,10 @@ You are an expert resume writer and career coach. Your task is to rewrite the fo
             tailored_content = tailored_content.replace(r'\\_', r'\_')
             tailored_content = tailored_content.replace(r'\\{', r'\{')
             tailored_content = tailored_content.replace(r'\\}', r'\}')
+
+            # Final validation - if content is empty after cleaning, return error
+            if not tailored_content.strip():
+                return "ERROR: Generated content was empty or contained only placeholders."
 
             print(f"Gemini tailoring successful for section '{section_name}'.")
             return tailored_content
