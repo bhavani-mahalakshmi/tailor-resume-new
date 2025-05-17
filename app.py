@@ -759,6 +759,77 @@ def cleanup_pdf_file(file_path, delay=300):  # 5 minutes delay
     
     Timer(delay, delete_file).start()
 
+def check_libreoffice():
+    """Check if LibreOffice is installed and return the path to soffice."""
+    try:
+        # Try common installation paths
+        possible_paths = [
+            '/Applications/LibreOffice.app/Contents/MacOS/soffice',  # macOS
+            '/usr/bin/soffice',  # Linux
+            '/usr/lib/libreoffice/program/soffice',  # Linux alternative
+            'C:\\Program Files\\LibreOffice\\program\\soffice.exe',  # Windows
+            'C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe'  # Windows 32-bit
+        ]
+        
+        # First try which/where command
+        try:
+            if os.name == 'nt':  # Windows
+                result = subprocess.run(['where', 'soffice'], capture_output=True, text=True, check=True)
+            else:  # Unix-like
+                result = subprocess.run(['which', 'soffice'], capture_output=True, text=True, check=True)
+            return result.stdout.strip()
+        except subprocess.CalledProcessError:
+            pass
+        
+        # Then check common paths
+        for path in possible_paths:
+            if os.path.exists(path):
+                return path
+                
+        return None
+    except Exception as e:
+        print(f"Error checking for LibreOffice: {e}")
+        return None
+
+def convert_to_pdf(docx_path, output_dir):
+    """Convert DOCX to PDF using available tools."""
+    soffice_path = check_libreoffice()
+    
+    if soffice_path:
+        try:
+            pdf_path = os.path.join(output_dir, 'updated.pdf')
+            subprocess.run([
+                soffice_path,
+                '--headless',
+                '--convert-to', 'pdf:writer_pdf_Export',
+                '--outdir', output_dir,
+                docx_path
+            ], check=True)
+            
+            # Find the generated PDF
+            if not os.path.exists(pdf_path):
+                for f in os.listdir(output_dir):
+                    if f.endswith('.pdf'):
+                        pdf_path = os.path.join(output_dir, f)
+                        break
+            return pdf_path
+        except Exception as e:
+            print(f"LibreOffice conversion failed: {e}")
+            return None
+    
+    # Fallback: Try using python-docx2pdf if available
+    try:
+        import docx2pdf
+        pdf_path = os.path.join(output_dir, 'updated.pdf')
+        docx2pdf.convert(docx_path, pdf_path)
+        return pdf_path
+    except ImportError:
+        print("docx2pdf not installed")
+    except Exception as e:
+        print(f"docx2pdf conversion failed: {e}")
+    
+    return None
+
 # --- Flask Routes ---
 
 @app.route('/')
@@ -768,7 +839,7 @@ def index():
 
 @app.route('/process', methods=['POST'])
 def process_resume():
-    """Handles file upload, parsing, and returns tailored summary only."""
+    """Handles file upload, parsing, and returns tailored summary and skills."""
     if 'resume' not in request.files:
         return jsonify({"error": "No resume file part in the request."}), 400
 
@@ -794,14 +865,22 @@ def process_resume():
                 return jsonify({"error": f"Parsing failed: {parsed_data['ERROR']}"}), 400
             if not parsed_data:
                 return jsonify({"error": "Parsing failed: No sections found in the resume."}), 400
-            # Only process SUMMARY section
+
+            # Get both SUMMARY and SKILLS sections
             summary = parsed_data.get("SUMMARY")
+            skills = parsed_data.get("SKILLS") or parsed_data.get("KEY SKILLS")  # Try both common names
+            
             if not summary:
                 return jsonify({"error": "No SUMMARY section found in the resume."}), 400
-            # Tailor summary using Gemini
+            if not skills:
+                return jsonify({"error": "No SKILLS section found in the resume."}), 400
+
+            # Tailor both sections using Gemini
             if not gemini_model:
                 return jsonify({"error": "AI model is not configured."}), 500
-            prompt = f"""
+
+            # Tailor summary
+            summary_prompt = f"""
 You are an expert resume writer. Rewrite the following resume summary so that it is highly tailored to the provided job description and optimized to pass Applicant Tracking Systems (ATS). Use keywords from the job description naturally. Do not include any section headers or explanations. Return only the rewritten summary text.
 
 Job Description:
@@ -812,21 +891,59 @@ Original Summary:
 
 Rewritten Summary:
 """
+            # Tailor skills
+            skills_prompt = f"""
+You are an expert resume writer. Rewrite the following skills section to be highly tailored to the provided job description. Focus on:
+1. Prioritizing skills that match the job requirements
+2. Using the exact terminology from the job description
+3. Grouping related skills together
+4. Removing irrelevant skills
+5. Adding any missing critical skills from the job description that the candidate likely has
+
+Format the output as a bullet-point list, with each skill on a new line starting with a bullet point (•). Do not include any section headers or explanations.
+
+Job Description:
+{manual_jd}
+
+Original Skills:
+{skills}
+
+Rewritten Skills (bullet points only):
+"""
+
             try:
-                response = gemini_model.generate_content(
-                    prompt,
+                # Generate tailored summary
+                summary_response = gemini_model.generate_content(
+                    summary_prompt,
                     generation_config=genai.types.GenerationConfig(
                         max_output_tokens=512,
                         temperature=0.7
                     )
                 )
-                tailored_summary = response.text.strip() if response and hasattr(response, 'text') else None
-                if not tailored_summary:
-                    return jsonify({"error": "AI did not return a summary."}), 500
-                return jsonify({"tailored_summary": tailored_summary})
+                tailored_summary = summary_response.text.strip() if summary_response and hasattr(summary_response, 'text') else None
+
+                # Generate tailored skills
+                skills_response = gemini_model.generate_content(
+                    skills_prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        max_output_tokens=512,
+                        temperature=0.7
+                    )
+                )
+                tailored_skills = skills_response.text.strip() if skills_response and hasattr(skills_response, 'text') else None
+
+                if not tailored_summary or not tailored_skills:
+                    return jsonify({"error": "AI did not return complete content."}), 500
+
+                return jsonify({
+                    "tailored_summary": tailored_summary,
+                    "tailored_skills": tailored_skills
+                })
+
             except Exception as e:
                 print(f"Error calling Gemini: {e}")
                 return jsonify({"error": f"AI error: {e}"}), 500
+
         finally:
             if os.path.exists(file_path):
                 try:
@@ -947,13 +1064,14 @@ def download_pdf(filename):
 @app.route('/download-docx', methods=['POST'])
 def download_docx():
     """
-    Accepts a .docx and a tailored summary, replaces the SUMMARY section,
-    converts to PDF (preserving formatting), and returns the PDF for download.
+    Creates a new document preserving all formatting from the original,
+    replacing only the summary and skills sections with tailored content.
     """
-    if 'resume' not in request.files or 'tailored_summary' not in request.form:
-        return jsonify({'error': 'Missing file or summary.'}), 400
+    if 'resume' not in request.files or 'tailored_summary' not in request.form or 'tailored_skills' not in request.form:
+        return jsonify({'error': 'Missing file or tailored sections.'}), 400
     resume_file = request.files['resume']
     tailored_summary = request.form['tailored_summary']
+    tailored_skills = request.form['tailored_skills']
     if not resume_file.filename.lower().endswith('.docx'):
         return jsonify({'error': 'Only .docx files are supported.'}), 400
     try:
@@ -961,55 +1079,106 @@ def download_docx():
         with tempfile.TemporaryDirectory() as tmpdir:
             orig_docx_path = os.path.join(tmpdir, 'orig.docx')
             resume_file.save(orig_docx_path)
-            # Load docx
+            
+            # Load the original document
             doc = docx.Document(orig_docx_path)
-            # Find and replace SUMMARY section (case-insensitive, preserve formatting)
-            found = False
-            section_start = None
-            section_end = None
-            for i, para in enumerate(doc.paragraphs):
-                if para.text.strip().upper().startswith('SUMMARY'):
-                    section_start = i
-                    found = True
-                    break
-            if not found:
-                return jsonify({'error': 'SUMMARY section not found in the document.'}), 400
-            # Find where SUMMARY section ends (next all-caps heading or end)
-            section_end = len(doc.paragraphs)
-            for j in range(section_start+1, len(doc.paragraphs)):
-                t = doc.paragraphs[j].text.strip()
-                if t.isupper() and len(t) > 2 and not t.startswith('SUMMARY'):
-                    section_end = j
-                    break
-            # Remove old SUMMARY content
-            for _ in range(section_end - section_start - 1):
-                del doc.paragraphs[section_start+1]._element
-            # Replace content (preserve heading formatting)
-            # Insert new summary as a single paragraph (preserves style)
-            if section_end > section_start+1:
-                doc.paragraphs[section_start+1].text = tailored_summary
-            else:
-                doc.add_paragraph(tailored_summary)
-            # Save updated docx
+            
+            def find_section_with_formatting(section_name):
+                start_idx = None
+                end_idx = len(doc.paragraphs)
+                section_style = None
+                content_styles = []
+                
+                # First pass: find section and collect styles
+                for i, para in enumerate(doc.paragraphs):
+                    if para.text.strip().upper().startswith(section_name):
+                        start_idx = i
+                        section_style = para.style
+                        # Find where section ends (next all-caps heading or end)
+                        for j in range(i+1, len(doc.paragraphs)):
+                            t = doc.paragraphs[j].text.strip()
+                            if t.isupper() and len(t) > 2 and not t.startswith(section_name):
+                                end_idx = j
+                                break
+                        # Collect styles of content paragraphs
+                        for j in range(i+1, end_idx):
+                            if doc.paragraphs[j].text.strip():
+                                content_styles.append(doc.paragraphs[j].style)
+                        break
+                return start_idx, end_idx, section_style, content_styles
+
+            def insert_formatted_content(start_idx, end_idx, content, section_style, content_styles):
+                if start_idx is None:
+                    return
+                
+                # Remove old content
+                for _ in range(end_idx - start_idx - 1):
+                    del doc.paragraphs[start_idx+1]._element
+                
+                # Split content into paragraphs
+                paragraphs = [p.strip() for p in content.split('\n') if p.strip()]
+                
+                # Insert new content with preserved formatting
+                if paragraphs:
+                    # First paragraph gets the first content style (or default if none)
+                    style = content_styles[0] if content_styles else None
+                    p = doc.add_paragraph(paragraphs[0], style=style)
+                    p._p.addnext(doc.paragraphs[start_idx]._p)  # Move after section header
+                    
+                    # Remaining paragraphs get subsequent styles (cycling if needed)
+                    for i, para_text in enumerate(paragraphs[1:], 1):
+                        style = content_styles[i % len(content_styles)] if content_styles else None
+                        p = doc.add_paragraph(para_text, style=style)
+                        p._p.addnext(doc.paragraphs[start_idx+1]._p)  # Keep in order
+
+            # Update SUMMARY section
+            summary_start, summary_end, summary_style, summary_content_styles = find_section_with_formatting('SUMMARY')
+            if summary_start is not None:
+                # Preserve the section header
+                doc.paragraphs[summary_start].style = summary_style
+                insert_formatted_content(summary_start, summary_end, tailored_summary, summary_style, summary_content_styles)
+
+            # Update SKILLS section (try both common names)
+            skills_start, skills_end, skills_style, skills_content_styles = find_section_with_formatting('SKILLS')
+            if skills_start is None:
+                skills_start, skills_end, skills_style, skills_content_styles = find_section_with_formatting('KEY SKILLS')
+            
+            if skills_start is not None:
+                # Preserve the section header
+                doc.paragraphs[skills_start].style = skills_style
+                # For skills, we want to preserve bullet point formatting
+                if not any('•' in line for line in tailored_skills.split('\n')):
+                    # If no bullets in input, add them
+                    tailored_skills = '\n'.join(f'• {line.strip()}' for line in tailored_skills.split('\n') if line.strip())
+                insert_formatted_content(skills_start, skills_end, tailored_skills, skills_style, skills_content_styles)
+
+            # Save the updated document
             updated_docx_path = os.path.join(tmpdir, 'updated.docx')
             doc.save(updated_docx_path)
-            # Convert to PDF using LibreOffice
-            pdf_path = os.path.join(tmpdir, 'updated.pdf')
-            subprocess.run([
-                'soffice', '--headless', '--convert-to', 'pdf', '--outdir', tmpdir, updated_docx_path
-            ], check=True)
-            # The output PDF will be named 'updated.pdf' in tmpdir
-            if not os.path.exists(pdf_path):
-                # Try to find the PDF if LibreOffice changed the name
-                for f in os.listdir(tmpdir):
-                    if f.endswith('.pdf'):
-                        pdf_path = os.path.join(tmpdir, f)
-                        break
-            if not os.path.exists(pdf_path):
-                return jsonify({'error': 'PDF conversion failed.'}), 500
-            return send_file(pdf_path, as_attachment=True, download_name='updated_resume.pdf', mimetype='application/pdf')
+            
+            # Convert to PDF
+            pdf_path = convert_to_pdf(updated_docx_path, tmpdir)
+            
+            if not pdf_path:
+                # If PDF conversion failed, return the DOCX instead
+                return send_file(
+                    updated_docx_path,
+                    as_attachment=True,
+                    download_name='tailored_resume.docx',
+                    mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                )
+            
+            return send_file(
+                pdf_path,
+                as_attachment=True,
+                download_name='tailored_resume.pdf',
+                mimetype='application/pdf'
+            )
+            
     except Exception as e:
         print(f'Error in /download-docx: {e}')
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 # Add a cleanup function to run on server shutdown

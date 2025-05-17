@@ -418,9 +418,15 @@
             <button type="submit">Tailor Resume</button>
         </form>
         <div id="status"></div>
-        <div id="summary-section" style="display:none; margin-top:2rem;">
-            <h2>Edit Tailored Summary</h2>
-            <textarea id="tailored-summary" style="width:100%; min-height:120px;"></textarea>
+        <div id="tailored-sections" style="display:none; margin-top:2rem;">
+            <div id="summary-section">
+                <h2>Edit Tailored Summary</h2>
+                <textarea id="tailored-summary" style="width:100%; min-height:120px;"></textarea>
+            </div>
+            <div id="skills-section" style="margin-top:2rem;">
+                <h2>Edit Tailored Skills</h2>
+                <textarea id="tailored-skills" style="width:100%; min-height:120px;"></textarea>
+            </div>
             <button id="download-pdf" class="download-btn" style="margin-top:1rem;">Download PDF</button>
         </div>
         <p class="note">Note: This tool uses AI, results may vary. Review carefully.</p>
@@ -437,8 +443,11 @@
         const form = document.getElementById('resume-form');
         const statusDiv = document.getElementById('status');
         const loadingOverlay = document.getElementById('loading-overlay');
+        const tailoredSections = document.getElementById('tailored-sections');
         const summarySection = document.getElementById('summary-section');
+        const skillsSection = document.getElementById('skills-section');
         const tailoredSummary = document.getElementById('tailored-summary');
+        const tailoredSkills = document.getElementById('tailored-skills');
         const downloadPdfBtn = document.getElementById('download-pdf');
         let lastResumeFile = null;
         function showLoading(message) {
@@ -457,7 +466,7 @@
             if (!fileInput.files[0]) return;
             lastResumeFile = fileInput.files[0];
             showLoading('Processing your resume...');
-            summarySection.style.display = 'none';
+            tailoredSections.style.display = 'none';
             try {
                 const response = await fetch('/process', {
                     method: 'POST',
@@ -470,8 +479,9 @@
                     return;
                 }
                 tailoredSummary.value = result.tailored_summary || '';
-                summarySection.style.display = 'block';
-                statusDiv.textContent = 'Review and edit your tailored summary below.';
+                tailoredSkills.value = result.tailored_skills || '';
+                tailoredSections.style.display = 'block';
+                statusDiv.textContent = 'Review and edit your tailored sections below.';
                 statusDiv.className = '';
             } catch (error) {
                 statusDiv.textContent = 'Error: Could not process the request.';
@@ -486,6 +496,7 @@
             const data = new FormData();
             data.append('resume', lastResumeFile);
             data.append('tailored_summary', tailoredSummary.value);
+            data.append('tailored_skills', tailoredSkills.value);
             try {
                 const response = await fetch('/download-docx', {
                     method: 'POST',
