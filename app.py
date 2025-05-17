@@ -25,7 +25,8 @@ load_dotenv()  # Load environment variables from .env file
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 # Limit file size (e.g., 16MB)
-ALLOWED_EXTENSIONS = {'pdf', 'docx'}
+# Only allow docx files
+ALLOWED_EXTENSIONS = {'docx'}
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
@@ -748,7 +749,7 @@ def index():
 
 @app.route('/process', methods=['POST'])
 def process_resume():
-    """Handles file upload, parsing, tailoring, and returns tailored LaTeX."""
+    """Handles file upload, parsing, and returns tailored summary only."""
     if 'resume' not in request.files:
         return jsonify({"error": "No resume file part in the request."}), 400
 
@@ -761,136 +762,60 @@ def process_resume():
         return jsonify({"error": "Job description is required."}), 400
 
     if file and allowed_file(file.filename):
-        # Secure the filename before saving
         filename = secure_filename(file.filename)
-        if not filename: # secure_filename can return empty string for dangerous names
-             filename = "uploaded_resume." + file.filename.rsplit('.', 1)[1].lower() # Fallback name
-
+        if not filename:
+            filename = "uploaded_resume.docx"
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-
         try:
             file.save(file_path)
             print(f"File saved to: {file_path}")
-
-            # --- Core Processing Pipeline ---
-            # 1. Parse Resume
-            print("\n--- Parsing Resume ---")
+            # Parse resume
             parsed_data = parse_resume(file_path)
             if "ERROR" in parsed_data:
-                 return jsonify({"error": f"Parsing failed: {parsed_data['ERROR']}"}), 400 # Use 400 for client-side errors like bad file
+                return jsonify({"error": f"Parsing failed: {parsed_data['ERROR']}"}), 400
             if not parsed_data:
-                 return jsonify({"error": "Parsing failed: No sections found in the resume."}), 400
-
-            # Keep a copy for the tailoring loop, as convert_to_latex might modify it (e.g., pop header)
-            parsed_data_for_tailoring = parsed_data.copy()
-
-            # 2. Convert to Initial LaTeX
-            print("\n--- Converting to LaTeX ---")
-            initial_latex = convert_to_latex(parsed_data) # parsed_data might be modified here
-            if "ERROR" in initial_latex:
-                 return jsonify({"error": f"LaTeX conversion failed: {initial_latex}"}), 500 # Internal server error
-            if r"\section*{" not in initial_latex and len(initial_latex) < 500:
-                 print("Warning: Initial LaTeX seems minimal. Conversion might have issues.")
-                 # Proceed but maybe add a warning to the user later?
-
-            # 3. Get Job Description
-            print("\n--- Getting Job Description ---")
-            job_description = manual_jd
-            print(f"Job Description Length: {len(job_description)} characters")
-            print(f"Job Description Preview: {job_description[:200]}...")
-            user_message = "" # Message to send back to the user
-            if len(job_description) < 150:
-                user_message = "Warning: Job description seems very short. Tailoring quality may be affected. "
-                print("Warning: Job description is very short")
-
-            # --- Track changes for dialog ---
-            tailoring_changes = []
-            # 4. Tailor each section using Gemini
-            updated_latex = initial_latex
-            print("\n--- Starting AI Tailoring Loop ---")
+                return jsonify({"error": "Parsing failed: No sections found in the resume."}), 400
+            # Only process SUMMARY section
+            summary = parsed_data.get("SUMMARY")
+            if not summary:
+                return jsonify({"error": "No SUMMARY section found in the resume."}), 400
+            # Tailor summary using Gemini
             if not gemini_model:
-                 user_message += "AI model is not configured; skipping tailoring."
-                 print("Skipping tailoring loop: Gemini model not available.")
-            else:
-                # Define which sections to attempt tailoring (adjust as needed)
-                sections_to_tailor = ["SUMMARY", "KEY SKILLS", "EXPERIENCE", "SKILLS", "PROJECTS"]
-                tailoring_errors = []
-                print(f"Found sections in resume: {list(parsed_data_for_tailoring.keys())}")
+                return jsonify({"error": "AI model is not configured."}), 500
+            prompt = f"""
+You are an expert resume writer. Rewrite the following resume summary so that it is highly tailored to the provided job description and optimized to pass Applicant Tracking Systems (ATS). Use keywords from the job description naturally. Do not include any section headers or explanations. Return only the rewritten summary text.
 
-                for section_name in sections_to_tailor:
-                    if section_name in parsed_data_for_tailoring:
-                        section_content = parsed_data_for_tailoring[section_name]
-                        print(f"\nProcessing section: {section_name}")
-                        print(f"Section content length: {len(section_content)} characters")
-                        if isinstance(section_content, str) and len(section_content.strip()) > 30:
-                            print(f"Tailoring section '{section_name}' with job description...")
-                            tailored_content = tailor_section_with_gemini(section_name, section_content, job_description)
+Job Description:
+{manual_jd}
 
-                            # Always update LaTeX for SUMMARY, KEY SKILLS, and SKILLS, ensuring correct formatting
-                            if section_name in ["SUMMARY", "KEY SKILLS", "SKILLS"]:
-                                # If the tailored_content is already wrapped in itemize, do not double-wrap
-                                if (section_name in ["KEY SKILLS", "SKILLS"] and not tailored_content.strip().startswith(r'\begin{itemize}')):
-                                    # Convert to itemize if not already
-                                    lines = [line.strip() for line in tailored_content.split('\n') if line.strip()]
-                                    formatted_content = r'\begin{itemize}\n'
-                                    for line in lines:
-                                        line = line.replace('•', '').replace('*', '').replace('-', '').strip()
-                                        formatted_content += r'  \item ' + escape_latex_text(line) + '\n'
-                                    formatted_content += r'\end{itemize}'
-                                    tailored_content = formatted_content
-                                updated_latex = update_latex(updated_latex, section_name, tailored_content)
-                            elif ("ERROR" not in tailored_content and tailored_content.strip()):
-                                print(f"Updating LaTeX for section '{section_name}'")
-                                updated_latex = update_latex(updated_latex, section_name, tailored_content)
-                            else:
-                                print(f"Skipping update for section '{section_name}' due to tailoring error or empty response: {tailored_content[:100]}...")
-                                tailoring_errors.append(f"Could not tailor '{section_name}': {tailored_content}")
+Original Summary:
+{summary}
 
-                            # Track changes for dialog
-                            if "ERROR" not in tailored_content and tailored_content.strip():
-                                if section_content.strip() != tailored_content.strip():
-                                    tailoring_changes.append({
-                                        "section": section_name,
-                                        "before": section_content.strip(),
-                                        "after": tailored_content.strip()
-                                    })
-                        else:
-                            print(f"Skipping section '{section_name}' - content too short or not suitable.")
-                    else:
-                         print(f"Skipping section '{section_name}' - not found in parsed data.")
-
-                if tailoring_errors:
-                     user_message += f"Note: Some sections could not be tailored ({len(tailoring_errors)} errors occurred). "
-                if user_message: # If we had scraping warnings or tailoring errors
-                     user_message += "Tailoring complete for other sections."
-                else:
-                     user_message = "Tailoring complete. Review the LaTeX below."
-
-            print("--- Tailoring Loop Complete ---")
-
-            # 6. Return final LaTeX and changes
-            print("Processing complete. Returning final LaTeX.")
-            return jsonify({"latex": updated_latex, "message": user_message.strip(), "changes": tailoring_changes, "errors": tailoring_errors})
-
-        except Exception as e:
-            print(f"An unexpected error occurred during processing: {e}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({"error": f"An internal server error occurred: {e}"}), 500
+Rewritten Summary:
+"""
+            try:
+                response = gemini_model.generate_content(
+                    prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        max_output_tokens=512,
+                        temperature=0.7
+                    )
+                )
+                tailored_summary = response.text.strip() if response and hasattr(response, 'text') else None
+                if not tailored_summary:
+                    return jsonify({"error": "AI did not return a summary."}), 500
+                return jsonify({"tailored_summary": tailored_summary})
+            except Exception as e:
+                print(f"Error calling Gemini: {e}")
+                return jsonify({"error": f"AI error: {e}"}), 500
         finally:
-            # Clean up the uploaded file in all cases (success or error)
             if os.path.exists(file_path):
                 try:
                     os.remove(file_path)
-                    print(f"Removed temporary file: {file_path}")
                 except OSError as e:
                     print(f"Error removing file {file_path}: {e}")
-
-    elif not allowed_file(file.filename):
-         return jsonify({"error": f"Invalid file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
     else:
-         # This case should ideally not be reached due to earlier checks
-         return jsonify({"error": "File processing failed unexpectedly."}), 500
+        return jsonify({"error": "Invalid file type. Only .docx is allowed."}), 400
 
 @app.route('/preview', methods=['POST'])
 def preview_latex():
@@ -999,6 +924,74 @@ def download_pdf(filename):
     except Exception as e:
         print(f"Error in PDF download: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route('/download-docx', methods=['POST'])
+def download_docx():
+    """
+    Accepts a .docx and a tailored summary, replaces the SUMMARY section,
+    converts to PDF (preserving formatting), and returns the PDF for download.
+    """
+    if 'resume' not in request.files or 'tailored_summary' not in request.form:
+        return jsonify({'error': 'Missing file or summary.'}), 400
+    resume_file = request.files['resume']
+    tailored_summary = request.form['tailored_summary']
+    if not resume_file.filename.lower().endswith('.docx'):
+        return jsonify({'error': 'Only .docx files are supported.'}), 400
+    try:
+        # Save uploaded docx to temp file
+        with tempfile.TemporaryDirectory() as tmpdir:
+            orig_docx_path = os.path.join(tmpdir, 'orig.docx')
+            resume_file.save(orig_docx_path)
+            # Load docx
+            doc = docx.Document(orig_docx_path)
+            # Find and replace SUMMARY section (case-insensitive, preserve formatting)
+            found = False
+            section_start = None
+            section_end = None
+            for i, para in enumerate(doc.paragraphs):
+                if para.text.strip().upper().startswith('SUMMARY'):
+                    section_start = i
+                    found = True
+                    break
+            if not found:
+                return jsonify({'error': 'SUMMARY section not found in the document.'}), 400
+            # Find where SUMMARY section ends (next all-caps heading or end)
+            section_end = len(doc.paragraphs)
+            for j in range(section_start+1, len(doc.paragraphs)):
+                t = doc.paragraphs[j].text.strip()
+                if t.isupper() and len(t) > 2 and not t.startswith('SUMMARY'):
+                    section_end = j
+                    break
+            # Remove old SUMMARY content
+            for _ in range(section_end - section_start - 1):
+                del doc.paragraphs[section_start+1]._element
+            # Replace content (preserve heading formatting)
+            # Insert new summary as a single paragraph (preserves style)
+            if section_end > section_start+1:
+                doc.paragraphs[section_start+1].text = tailored_summary
+            else:
+                doc.add_paragraph(tailored_summary)
+            # Save updated docx
+            updated_docx_path = os.path.join(tmpdir, 'updated.docx')
+            doc.save(updated_docx_path)
+            # Convert to PDF using LibreOffice
+            pdf_path = os.path.join(tmpdir, 'updated.pdf')
+            subprocess.run([
+                'soffice', '--headless', '--convert-to', 'pdf', '--outdir', tmpdir, updated_docx_path
+            ], check=True)
+            # The output PDF will be named 'updated.pdf' in tmpdir
+            if not os.path.exists(pdf_path):
+                # Try to find the PDF if LibreOffice changed the name
+                for f in os.listdir(tmpdir):
+                    if f.endswith('.pdf'):
+                        pdf_path = os.path.join(tmpdir, f)
+                        break
+            if not os.path.exists(pdf_path):
+                return jsonify({'error': 'PDF conversion failed.'}), 500
+            return send_file(pdf_path, as_attachment=True, download_name='updated_resume.pdf', mimetype='application/pdf')
+    except Exception as e:
+        print(f'Error in /download-docx: {e}')
+        return jsonify({'error': str(e)}), 500
 
 # Add a cleanup function to run on server shutdown
 @atexit.register

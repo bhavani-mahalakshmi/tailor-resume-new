@@ -398,82 +398,33 @@
         <form id="resume-form">
             <div class="form-group">
                 <div class="label-container">
-                    <label for="resume">Upload Resume (.pdf or .docx)</label>
-                    <div class="info-container">
-                        <i class="fas fa-info-circle info-icon"></i>
-                        <div class="info-tooltip">
-                            <h3>Resume Sections</h3>
-                            <ul>
-                                <li><strong>Header:</strong> Name and contact information</li>
-                                <li><strong>Summary:</strong> Professional overview</li>
-                                <li><strong>Experience:</strong> Work history with dates</li>
-                                <li><strong>Education:</strong> Degrees and dates</li>
-                                <li><strong>Skills:</strong> Technical and soft skills</li>
-                                <li><strong>Projects:</strong> Notable projects</li>
-                            </ul>
-                            <h3>Supported Formats</h3>
-                            <ul>
-                                <li>PDF files</li>
-                                <li>Word documents (.docx)</li>
-                            </ul>
-                            <h3>Tips</h3>
-                            <p>For best results, ensure your resume has clear section headers and is well-formatted.</p>
-                        </div>
-                    </div>
+                    <label for="resume">Upload Resume (.docx only)</label>
                 </div>
                 <div class="file-upload-container">
                     <label for="resume" class="file-upload-label">
                         <i class="fas fa-cloud-upload-alt"></i>
-                        <span>Choose a file or drag it here</span>
+                        <span>Choose a .docx file or drag it here</span>
                     </label>
-                    <input type="file" id="resume" name="resume" accept=".pdf,.docx" required>
+                    <input type="file" id="resume" name="resume" accept=".docx" required>
                     <div id="file-name" class="file-name"></div>
                 </div>
             </div>
             <div class="form-group">
                 <div class="label-container">
                     <label for="job_description">Job Description</label>
-                    <div class="info-container">
-                        <i class="fas fa-info-circle info-icon"></i>
-                        <div class="info-tooltip">
-                            <h3>Job Description Tips</h3>
-                            <p>Paste the complete job description here. Include:</p>
-                            <ul>
-                                <li>Job title and company</li>
-                                <li>Required qualifications</li>
-                                <li>Key responsibilities</li>
-                                <li>Desired skills and experience</li>
-                            </ul>
-                            <p>The more detailed the description, the better we can tailor your resume.</p>
-                        </div>
-                    </div>
                 </div>
                 <textarea id="job_description" name="job_description" placeholder="Paste the job description here..." required></textarea>
             </div>
             <button type="submit">Tailor Resume</button>
         </form>
-
         <div id="status"></div>
-
-        <div class="editor-preview-container">
-            <div class="editor-section">
-                <h2>Edit LaTeX</h2>
-                <div id="latex-editor">
-                    <textarea id="latex-code"></textarea>
-                </div>
-            </div>
-            
-            <div class="preview-section">
-                <h2>Preview</h2>
-                <iframe id="preview-frame"></iframe>
-                <button id="download-pdf" class="download-btn" style="display: none;">Download PDF</button>
-            </div>
+        <div id="summary-section" style="display:none; margin-top:2rem;">
+            <h2>Edit Tailored Summary</h2>
+            <textarea id="tailored-summary" style="width:100%; min-height:120px;"></textarea>
+            <button id="download-pdf" class="download-btn" style="margin-top:1rem;">Download PDF</button>
         </div>
-        
         <p class="note">Note: This tool uses AI, results may vary. Review carefully.</p>
     </div>
-
-    <!-- Full screen loading overlay -->
     <div id="loading-overlay" class="loading-overlay">
         <div class="loading-content">
             <div class="loading-bar">
@@ -482,207 +433,86 @@
             <div class="loading-text">Processing your resume...</div>
         </div>
     </div>
-
-    <!-- Tailoring Changes Dialog -->
-    <div id="changes-dialog" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.35); z-index:10000; justify-content:center; align-items:center;">
-        <div style="background:white; max-width:700px; width:90vw; border-radius:1rem; box-shadow:0 4px 24px rgba(0,0,0,0.18); padding:2rem; position:relative;">
-            <h2 style="margin-top:0;">Tailoring Results</h2>
-            <div id="changes-content" style="max-height:50vh; overflow:auto; font-size:0.98rem; margin-bottom:1.5rem;"></div>
-            <div style="display:flex; gap:1rem; justify-content:flex-end;">
-                <button id="copy-changes-btn" style="background:#2563eb; color:white;">Copy</button>
-                <button id="close-changes-btn" style="background:#64748b; color:white;">OK</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Add CodeMirror JS -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/stex/stex.min.js"></script> <!-- LaTeX mode -->
     <script>
         const form = document.getElementById('resume-form');
         const statusDiv = document.getElementById('status');
-        const latexCode = document.getElementById('latex-code');
-        const previewFrame = document.getElementById('preview-frame');
-        const downloadBtn = document.getElementById('download-pdf');
         const loadingOverlay = document.getElementById('loading-overlay');
-
-        // Initialize CodeMirror
-        const editor = CodeMirror.fromTextArea(latexCode, {
-            lineNumbers: true,
-            mode: 'stex', // LaTeX mode
-            theme: 'material-darker', // Choose a theme
-            lineWrapping: true
-        });
-
-        // Add change event listener to update preview when LaTeX changes
-        editor.on('change', debounce(function() {
-            updatePreview();
-        }, 1000)); // Debounce for 1 second
-
-        // Function to show loading state
+        const summarySection = document.getElementById('summary-section');
+        const tailoredSummary = document.getElementById('tailored-summary');
+        const downloadPdfBtn = document.getElementById('download-pdf');
+        let lastResumeFile = null;
         function showLoading(message) {
-            console.log('Showing loading:', message);
             loadingOverlay.style.display = 'flex';
             loadingOverlay.querySelector('.loading-text').textContent = message;
             statusDiv.textContent = '';
             statusDiv.className = '';
         }
-
-        // Function to hide loading state
         function hideLoading() {
-            console.log('Hiding loading');
             loadingOverlay.style.display = 'none';
         }
-
-        // Function to update preview
-        function updatePreview() {
-            const latex = editor.getValue();
-            console.log("Updating preview with LaTeX content:", latex);
-            if (!latex) {
-                console.log("No LaTeX content to preview");
-                return;
-            }
-
-            showLoading('Generating PDF preview...');
-
-            // Create a form to submit the LaTeX content
-            const formData = new FormData();
-            formData.append('latex', latex);
-            console.log("FormData created with LaTeX content");
-
-            // Send to backend for preview
-            console.log("Sending preview request to backend...");
-            fetch('/preview', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => {
-                console.log("Received response:", response.status);
-                return response.json();
-            })
-            .then(data => {
-                console.log("Response data:", data);
-                if (data.error) {
-                    console.error("Preview error:", data.error);
-                    let errorMessage = `Preview Error: ${data.error}`;
-                    if (data.details) {
-                        errorMessage += `\n\nDetails:\n${data.details}`;
-                    }
-                    statusDiv.textContent = errorMessage;
-                    statusDiv.className = 'error';
-                    statusDiv.style.whiteSpace = 'pre-wrap'; // Preserve line breaks in error message
-                    downloadBtn.style.display = 'none';
-                } else {
-                    console.log("Preview successful, updating iframe and download button");
-                    // Update preview iframe with the PDF URL
-                    previewFrame.src = data.preview_url;
-                    downloadBtn.style.display = 'block';
-                    downloadBtn.onclick = () => window.location.href = data.download_url;
-                }
-            })
-            .catch(error => {
-                console.error('Preview Error:', error);
-                statusDiv.textContent = 'Error generating preview.';
-                statusDiv.className = 'error';
-                downloadBtn.style.display = 'none';
-            })
-            .finally(() => {
-                hideLoading();
-            });
-        }
-
-        // Debounce function to limit how often updatePreview is called
-        function debounce(func, wait) {
-            let timeout;
-            return function executedFunction(...args) {
-                const later = () => {
-                    clearTimeout(timeout);
-                    func(...args);
-                };
-                clearTimeout(timeout);
-                timeout = setTimeout(later, wait);
-            };
-        }
-
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
             const formData = new FormData(form);
-            
+            const fileInput = document.getElementById('resume');
+            if (!fileInput.files[0]) return;
+            lastResumeFile = fileInput.files[0];
+            showLoading('Processing your resume...');
+            summarySection.style.display = 'none';
             try {
-                showLoading('Processing your resume...');
-                editor.setValue('');
-                downloadBtn.style.display = 'none';
-
                 const response = await fetch('/process', {
                     method: 'POST',
                     body: formData,
                 });
-
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    console.error('Server error:', errorText);
-                    throw new Error(`Server error: ${response.status} ${response.statusText}`);
-                }
-
                 const result = await response.json();
-
-                // --- Show dialog with changes or error ---
-                let dialog = document.getElementById('changes-dialog');
-                let content = document.getElementById('changes-content');
-                let copyBtn = document.getElementById('copy-changes-btn');
-                let closeBtn = document.getElementById('close-changes-btn');
-                let dialogText = '';
-                if (result.error) {
-                    dialogText = `<div style='color:#dc2626; font-weight:500;'>Error: ${result.error}</div>`;
-                } else if (result.changes && result.changes.length > 0) {
-                    dialogText = result.changes.map(change =>
-                        `<div style='margin-bottom:1.2em;'><b>Section:</b> ${change.section}<br><b>Before:</b><pre style='background:#f1f5f9; padding:0.5em; border-radius:0.3em; overflow:auto;'>${escapeHtml(change.before)}</pre><b>After:</b><pre style='background:#e0f2fe; padding:0.5em; border-radius:0.3em; overflow:auto;'>${escapeHtml(change.after)}</pre></div>`
-                    ).join('');
-                } else if (result.errors && result.errors.length > 0) {
-                    dialogText = result.errors.map(e => `<div style='color:#dc2626; margin-bottom:0.5em;'>${escapeHtml(e)}</div>`).join('');
-                } else {
-                    dialogText = '<div>No changes were made.</div>';
-                }
-                content.innerHTML = dialogText;
-                dialog.style.display = 'flex';
-
-                copyBtn.onclick = function() {
-                    let textToCopy = content.innerText;
-                    navigator.clipboard.writeText(textToCopy);
-                };
-                closeBtn.onclick = function() {
-                    dialog.style.display = 'none';
-                };
-
-                if (result.error) {
-                    statusDiv.textContent = `Error: ${result.error}`;
+                if (!response.ok || result.error) {
+                    statusDiv.textContent = result.error || 'An error occurred.';
                     statusDiv.className = 'error';
-                } else {
-                    editor.setValue(result.latex || '');
-                    statusDiv.textContent = result.message || 'Tailoring complete. Review the LaTeX below.';
-                    updatePreview();
+                    return;
                 }
+                tailoredSummary.value = result.tailored_summary || '';
+                summarySection.style.display = 'block';
+                statusDiv.textContent = 'Review and edit your tailored summary below.';
+                statusDiv.className = '';
             } catch (error) {
-                console.error('Fetch Error:', error);
-                statusDiv.textContent = `Error: Could not connect to the server or process the request. ${error.message}`;
+                statusDiv.textContent = 'Error: Could not process the request.';
                 statusDiv.className = 'error';
             } finally {
                 hideLoading();
             }
         });
-
-        // Utility to escape HTML for safe display
-        function escapeHtml(text) {
-            if (!text) return '';
-            return text.replace(/[&<>"']/g, function(m) {
-                return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m];
-            });
-        }
-
-        // Add file name display functionality
+        downloadPdfBtn.addEventListener('click', async () => {
+            if (!lastResumeFile) return;
+            showLoading('Generating updated PDF...');
+            const data = new FormData();
+            data.append('resume', lastResumeFile);
+            data.append('tailored_summary', tailoredSummary.value);
+            try {
+                const response = await fetch('/download-docx', {
+                    method: 'POST',
+                    body: data
+                });
+                if (!response.ok) throw new Error('Failed to generate PDF');
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'tailored_resume.pdf';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                statusDiv.textContent = 'Your tailored PDF has been downloaded!';
+                statusDiv.className = '';
+            } catch (e) {
+                statusDiv.textContent = 'Error: Could not generate updated PDF.';
+                statusDiv.className = 'error';
+            } finally {
+                hideLoading();
+            }
+        });
+        // File name display and drag-drop (unchanged)
         const fileInput = document.getElementById('resume');
         const fileNameDisplay = document.getElementById('file-name');
-
         fileInput.addEventListener('change', function(e) {
             const fileName = e.target.files[0]?.name;
             if (fileName) {
@@ -693,37 +523,20 @@
                 fileNameDisplay.classList.remove('show');
             }
         });
-
-        // Add drag and drop functionality
         const dropZone = document.querySelector('.file-upload-label');
-
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
             dropZone.addEventListener(eventName, preventDefaults, false);
         });
-
-        function preventDefaults(e) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
-
+        function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
         ['dragenter', 'dragover'].forEach(eventName => {
             dropZone.addEventListener(eventName, highlight, false);
         });
-
         ['dragleave', 'drop'].forEach(eventName => {
             dropZone.addEventListener(eventName, unhighlight, false);
         });
-
-        function highlight(e) {
-            dropZone.classList.add('highlight');
-        }
-
-        function unhighlight(e) {
-            dropZone.classList.remove('highlight');
-        }
-
+        function highlight(e) { dropZone.classList.add('highlight'); }
+        function unhighlight(e) { dropZone.classList.remove('highlight'); }
         dropZone.addEventListener('drop', handleDrop, false);
-
         function handleDrop(e) {
             const dt = e.dataTransfer;
             const files = dt.files;
